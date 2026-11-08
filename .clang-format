@@ -1,0 +1,9 @@
+BasedOnStyle: WebKit
+Language: Cpp
+BreakBeforeBraces: Allman
+ColumnLimit: 100
+IndentWidth: 4
+PointerAlignment: Right
+AlignConsecutiveDeclarations: Consecutive
+AlignTrailingComments: true
+SortIncludes: Never

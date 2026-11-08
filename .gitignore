@@ -1,0 +1,104 @@
+# ---------------------------------------------------------------
+# C / CMake / embedded .gitignore
+# ---------------------------------------------------------------
+
+# Build directories
+build/
+build-*/
+out/
+cmake-build-*/
+
+# Object files and intermediates
+*.o
+*.obj
+*.ko
+*.elf
+*.d
+*.su
+*.i
+*.ii
+*.s.tmp
+*.gch
+*.pch
+*.ilk
+*.idb
+*.pdb
+
+# Libraries
+*.a
+*.lib
+*.so
+*.so.*
+*.dylib
+*.dll
+*.la
+*.lo
+
+# Executables
+*.exe
+*.out
+*.app
+*.x86_64
+
+# Embedded firmware outputs
+*.hex
+*.bin
+*.map
+*.lst
+*.srec
+*.axf
+*.uf2
+
+# CMake generated files (in-source builds)
+CMakeCache.txt
+CMakeFiles/
+CMakeScripts/
+cmake_install.cmake
+install_manifest.txt
+CTestTestfile.cmake
+Testing/
+_deps/
+CMakeUserPresets.json
+Makefile.cmake
+
+# Compilation database and language-server caches
+compile_commands.json
+.cache/
+.clangd/
+.ccls-cache/
+
+# Debug, profiling and coverage
+*.dSYM/
+*.gcno
+*.gcda
+*.gcov
+*.profraw
+*.profdata
+coverage/
+core
+core.*
+vgcore.*
+
+# Generated audio (keep golden reference files for tests)
+*.wav
+!tests/golden/*.wav
+
+# IDEs and editors
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+*~
+.vs/
+*.user
+*.suo
+.settings/
+.project
+.cproject
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini

@@ -1,0 +1,135 @@
+{
+    "version": 3,
+    "cmakeMinimumRequired": {
+        "major": 3,
+        "minor": 21,
+        "patch": 0
+    },
+    "configurePresets": [
+        {
+            "name": "cm0plus-base",
+            "hidden": true,
+            "toolchainFile": "${sourceDir}/cmake/toolchains/arm-none-eabi-cortex-m0plus.cmake",
+            "cacheVariables": {
+                "PCL_BUILD_TESTS": "OFF",
+                "PCL_BUILD_EXAMPLES": "OFF",
+                "PCL_BUILD_TOOLS": "OFF",
+                "PCL_ALLOW_FLOAT_INIT": "OFF"
+            }
+        },
+        {
+            "name": "cm0plus-q15",
+            "displayName": "Cortex-M0+ compile check, Q15",
+            "inherits": "cm0plus-base",
+            "binaryDir": "${sourceDir}/build-cm0plus-q15",
+            "cacheVariables": {
+                "PCL_SAMPLE_TYPE": "Q15"
+            }
+        },
+        {
+            "name": "cm0plus-q31",
+            "displayName": "Cortex-M0+ compile check, Q31",
+            "inherits": "cm0plus-base",
+            "binaryDir": "${sourceDir}/build-cm0plus-q31",
+            "cacheVariables": {
+                "PCL_SAMPLE_TYPE": "Q31"
+            }
+        },
+        {
+            "name": "cm33-base",
+            "hidden": true,
+            "toolchainFile": "${sourceDir}/cmake/toolchains/arm-none-eabi-cortex-m33.cmake",
+            "cacheVariables": {
+                "PCL_BUILD_TESTS": "OFF",
+                "PCL_BUILD_EXAMPLES": "OFF",
+                "PCL_BUILD_TOOLS": "OFF",
+                "PCL_ALLOW_FLOAT_INIT": "OFF",
+                "PCL_CHECK_NO_FLOAT": "OFF"
+            }
+        },
+        {
+            "name": "cm33-float",
+            "displayName": "Cortex-M33 + FPU (MCX N947), float",
+            "inherits": "cm33-base",
+            "binaryDir": "${sourceDir}/build-cm33-float",
+            "cacheVariables": {
+                "PCL_SAMPLE_TYPE": "FLOAT"
+            }
+        },
+        {
+            "name": "cm33-q31",
+            "displayName": "Cortex-M33 + FPU (MCX N947), Q31",
+            "inherits": "cm33-base",
+            "binaryDir": "${sourceDir}/build-cm33-q31",
+            "cacheVariables": {
+                "PCL_SAMPLE_TYPE": "Q31"
+            }
+        },
+        {
+            "name": "mcxn947-float",
+            "displayName": "FRDM-MCXN947 firmware, FLOAT",
+            "inherits": "cm33-base",
+            "binaryDir": "${sourceDir}/build-mcxn947-float",
+            "cacheVariables": {
+                "PCL_SAMPLE_TYPE": "FLOAT",
+                "PCL_BUILD_MCXN947": "ON",
+                "CMAKE_BUILD_TYPE": "Release",
+                "CMAKE_C_FLAGS_RELEASE": "-O2 -DNDEBUG"
+            }
+        },
+        {
+            "name": "mcxn947-q15",
+            "displayName": "FRDM-MCXN947 firmware, Q15",
+            "inherits": "cm33-base",
+            "binaryDir": "${sourceDir}/build-mcxn947-q15",
+            "cacheVariables": {
+                "PCL_SAMPLE_TYPE": "Q15",
+                "PCL_BUILD_MCXN947": "ON",
+                "CMAKE_BUILD_TYPE": "Release",
+                "CMAKE_C_FLAGS_RELEASE": "-O2 -DNDEBUG"
+            }
+        },
+        {
+            "name": "mcxn947-q31",
+            "displayName": "FRDM-MCXN947 firmware, Q31",
+            "inherits": "cm33-base",
+            "binaryDir": "${sourceDir}/build-mcxn947-q31",
+            "cacheVariables": {
+                "PCL_SAMPLE_TYPE": "Q31",
+                "PCL_BUILD_MCXN947": "ON",
+                "CMAKE_BUILD_TYPE": "Release",
+                "CMAKE_C_FLAGS_RELEASE": "-O2 -DNDEBUG"
+            }
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "cm0plus-q15",
+            "configurePreset": "cm0plus-q15"
+        },
+        {
+            "name": "cm0plus-q31",
+            "configurePreset": "cm0plus-q31"
+        },
+        {
+            "name": "cm33-float",
+            "configurePreset": "cm33-float"
+        },
+        {
+            "name": "cm33-q31",
+            "configurePreset": "cm33-q31"
+        },
+        {
+            "name": "mcxn947-float",
+            "configurePreset": "mcxn947-float"
+        },
+        {
+            "name": "mcxn947-q15",
+            "configurePreset": "mcxn947-q15"
+        },
+        {
+            "name": "mcxn947-q31",
+            "configurePreset": "mcxn947-q31"
+        }
+    ]
+}
