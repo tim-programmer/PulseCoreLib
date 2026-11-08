@@ -704,10 +704,15 @@ void pcl_osc_process(pcl_osc_t *osc, pcl_sample_t *out, const pcl_sample_t *pitc
         o.ctrl_count = (uint8_t)(o.ctrl_count - 1u);
 
         sync_report = o.sync_pending;
-        if (sync_in != NULL && sync_in[i] != 0)
+        if (sync_in != NULL && sync_in[i] > 0) /* a negative (or NaN) fraction is no event */
         {
-            osc_sync(&o, sync_in[i], &y_adj, &held_adj);
-            sync_report = sync_in[i]; /* a forced restart is a phase return too */
+            /* A fraction is at most 1 (the largest sample in fixed point, so only float can exceed
+               it). The helpers below assume a fraction; a wild value was signed overflow or an
+               out-of-range float conversion. */
+            const pcl_sample_t sync = sync_in[i] > osc_sample_max() ? osc_sample_max() : sync_in[i];
+
+            osc_sync(&o, sync, &y_adj, &held_adj);
+            sync_report = sync; /* a forced restart is a phase return too */
             synced = 1;
         }
         if (sync_out != NULL)

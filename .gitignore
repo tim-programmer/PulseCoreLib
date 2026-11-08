@@ -102,3 +102,6 @@ vgcore.*
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# NXP MCUXpresso SDK pieces (fetched by scripts/fetch_mcuxsdk.sh, ~35 MB)
+/third_party/

@@ -53,7 +53,7 @@ inputs. There is no separate VCO implementation.
 | `pcl_osc_set_phase` | `uint32_t` | any | A deliberate jump; no correction applied |
 | `pitch_mod` (input) | normalized | [-1, 1] | Optional. Octaves = `pitch_mod * pitch_depth_oct` |
 | `pwm_mod` (input) | normalized | [-1, 1] | Optional; pulse only. Width = `pulse_width + pwm_depth * pwm_mod` |
-| `sync_in` (input) | fraction of a sample | 0 or (0, 1) | Optional. See "Hard sync" |
+| `sync_in` (input) | fraction of a sample | 0 or (0, 1] | Optional. See "Hard sync". Outside the range (a negative or NaN sample, or a float above 1) it is clamped: no event, and 1 |
 | `sync_out` (output) | fraction of a sample | 0 or (0, 1) | Optional; `NULL` = not computed |
 
 Output is nominally [-1, 1]. Fixed-point builds saturate; the float build does not clip.
@@ -201,6 +201,10 @@ are `pcl_sample_t` buffers.
   independence.
 * `sync_out` also reports a slave's forced restarts (so chains work). Request it consistently
   across calls; toggling it mid-stream can drop a wrap at the boundary.
+* `sync_in` takes **any signal without undefined behaviour**. A sample that is not a fraction is clamped at the input: negative or NaN
+  means no event, and a float above 1 counts as 1 (in fixed point the largest sample is already 1). Before this, a negative sample was
+  signed overflow in the Q31 build and an out-of-range float-to-unsigned conversion in the float build (found by patching noise into
+  a slave's sync input in the PulseRack rack, under UBSan).
 
 **Known limitation:** if a slave would also wrap naturally within the same sample as a sync event,
 that sample receives both corrections and glitches slightly. It is rare (probability about the
@@ -321,6 +325,8 @@ Figures are the fastest of 8 blocks divided by 256; the spread between blocks is
   out, and a glide all active, for every waveform;
 * extreme parameters (max frequency, depth 7.9, square modulation, sync storms, width limits):
   finite, bounded, no denormals in float.
+* `sync_in` outside the contract (negative, NaN, infinity, above 1, the most negative sample): bit-identical to the sanitised input, in audio and
+  in `sync_out`, for every waveform; clean under UBSan in all three builds.
 
 Also run clean under GCC and Clang, at `-O0` and `-O2`, and under ASan + UBSan in all three
 builds. Not verified: MSVC (`/W4 /WX`).

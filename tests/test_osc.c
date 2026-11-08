@@ -740,6 +740,89 @@ static void test_sync_every_sample_stays_sane(void)
     }
 }
 
+/* A sync_in sample outside the contract (the fraction of a wrap, 0 or in (0, 1]) must not be
+   undefined behaviour: a negative one (or NaN) is "no event", and one above 1 (float only) counts
+   as 1. In the Q31 build a negative sample used to overflow a signed integer in osc_comp (found by
+   UBSan with noise patched into a slave's sync input). */
+static pcl_sample_t out_of_contract_sync(size_t i, pcl_sample_t *expected)
+{
+    pcl_sample_t bad;
+    const double fractions[] = { 0.37, 0.0025, 0.9, 0.5 };
+
+    switch (i % 8u)
+    {
+    case 0:
+        bad = *expected
+            = pcl_test_from_double(fractions[(i / 8u) % 4u]); /* a valid fraction passes through */
+        return bad;
+    case 1:
+        bad = pcl_test_from_double(-0.0025); /* -5.4e6 in Q31: the value UBSan reported */
+        break;
+    case 2:
+        bad = pcl_test_from_double(-0.9);
+        break;
+    case 3:
+#if PCL_SAMPLE_TYPE == PCL_FLOAT
+        bad = -1.0e30f;
+#elif PCL_SAMPLE_TYPE == PCL_Q15
+        bad = INT16_MIN;
+#else
+        bad = INT32_MIN;
+#endif
+        break;
+    case 4:
+#if PCL_SAMPLE_TYPE == PCL_FLOAT
+        bad = NAN;
+#else
+        bad = -1; /* the smallest negative step */
+#endif
+        break;
+    case 5:
+#if PCL_SAMPLE_TYPE == PCL_FLOAT
+        *expected = 1.0f; /* above 1: counts as 1 */
+        return 2.5f;
+#else
+        *expected = 0;
+        return 0;
+#endif
+    case 6:
+#if PCL_SAMPLE_TYPE == PCL_FLOAT
+        *expected = 1.0f;
+        return INFINITY;
+#else
+        *expected = 0;
+        return 0;
+#endif
+    default:
+        *expected = 0; /* no event */
+        return 0;
+    }
+    *expected = 0; /* a negative fraction or NaN: no event */
+    return bad;
+}
+
+static void test_sync_in_outside_the_contract(void)
+{
+    static pcl_sample_t bad[4096], good[4096], out_bad[4096], out_good[4096], rep_bad[4096],
+        rep_good[4096];
+    size_t w, i;
+
+    for (w = 0; w < 4; w++)
+    {
+        pcl_osc_t a, b;
+
+        for (i = 0; i < 4096; i++)
+            bad[i] = out_of_contract_sync(i, &good[i]);
+        make_osc(&a, g_waves[w], 3000.0, 1.0, 0.3, 0.0);
+        make_osc(&b, g_waves[w], 3000.0, 1.0, 0.3, 0.0);
+        pcl_osc_process(&a, out_bad, NULL, NULL, bad, rep_bad, 4096);
+        pcl_osc_process(&b, out_good, NULL, NULL, good, rep_good, 4096);
+        /* the bad input behaves exactly like the sanitised one: same audio, same reported events */
+        PCL_CHECK(memcmp(out_bad, out_good, sizeof out_bad) == 0);
+        PCL_CHECK(memcmp(rep_bad, rep_good, sizeof rep_bad) == 0);
+    }
+}
+
 /* ---- the contract every module's tests must cover (CLAUDE.md) ---- */
 
 static void test_reset_is_deterministic(void)
@@ -866,6 +949,7 @@ int main(void)
     PCL_RUN_TEST(test_sync_out_reports_phase_returns);
     PCL_RUN_TEST(test_sync_slave_follows_master);
     PCL_RUN_TEST(test_sync_every_sample_stays_sane);
+    PCL_RUN_TEST(test_sync_in_outside_the_contract);
     PCL_RUN_TEST(test_reset_is_deterministic);
     PCL_RUN_TEST(test_block_size_independence);
     PCL_RUN_TEST(test_extreme_parameters_stay_finite);

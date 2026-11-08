@@ -119,7 +119,9 @@ void pcl_osc_set_phase(pcl_osc_t *osc, uint32_t phase);
  *   pitch_mod  normalized [-1, 1]; octaves = pitch_mod * pitch_depth_oct (control rate)
  *   pwm_mod    normalized [-1, 1]; width = pulse_width + pwm_depth * pwm_mod (control rate,
  *              pulse waveform only), clamped so both edges' correction windows stay apart
- *   sync_in    master wrap fractions (see above); resets the phase with sub-sample accuracy
+ *   sync_in    master wrap fractions (see above); resets the phase with sub-sample accuracy.
+ *              Valid: 0 (no event) or (0, 1]. A negative or NaN sample is no event and a float
+ *              above 1 counts as 1, so any signal may be patched in
  *   sync_out   receives this oscillator's own phase-return events, same encoding;
  *              NULL = don't compute. Request it consistently across calls.
  * Every buffer may alias any other (each element is read before the same index is written).
