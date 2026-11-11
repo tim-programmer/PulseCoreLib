@@ -75,7 +75,7 @@ compile_commands.json
 *.profraw
 *.profdata
 coverage/
-core
+/core
 core.*
 vgcore.*
 
