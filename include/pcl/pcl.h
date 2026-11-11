@@ -14,6 +14,7 @@
 #include "pcl/pcl_arp.h"
 #include "pcl/pcl_biquad.h"
 #include "pcl/pcl_clock.h"
+#include "pcl/pcl_delay.h"
 #include "pcl/pcl_event.h"
 #include "pcl/pcl_ladder.h"
 #include "pcl/pcl_lfo.h"

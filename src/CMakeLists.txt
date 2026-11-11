@@ -8,6 +8,7 @@ add_library(pcl STATIC
     filter/pcl_biquad.c
     filter/pcl_ladder.c
     filter/pcl_svf.c
+    fx/pcl_delay.c
     mod/pcl_adsr.c
     mod/pcl_lfo.c
     mod/pcl_vca.c

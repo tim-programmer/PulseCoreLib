@@ -49,7 +49,8 @@ filter glided from 440 to 880 Hz, and a complete voice: oscillator, filter and V
 `render biquad <outdir>` four EQ patches (a swept peaking EQ, a shelf pair, a swept notch, a 4th-order
 Butterworth from two instances); `render ladder <outdir>` three ladder-filter patches (a saturated
 24 dB low-pass swept by an ADSR, self-oscillation started from a click at 440 then 880 Hz, and a saw
-through all eight modes in turn); `render events <outdir>` three patches that run the clock, the
+through all eight modes in turn); `render delay <outdir>` three delay patches (an echo with feedback and
+tone, a chorus and a flanger); `render events <outdir>` three patches that run the clock, the
 arpeggiator and the step sequencer into a voice (an arpeggiator over four chords in four modes, a 16-step
 acid line with ties, rests and swing, and a ping-pong run that turns random):
 
@@ -57,13 +58,13 @@ acid line with ties, rests and swing, and a ping-pong run that turns random):
 mkdir -p out && build-float/tools/render noise out && build-float/tools/render lfo out \
     && build-float/tools/render adsr out && build-float/tools/render svf out \
     && build-float/tools/render biquad out && build-float/tools/render ladder out \
-    && build-float/tools/render events out
+    && build-float/tools/render delay out && build-float/tools/render events out
 ```
 
 ## Testing on a FRDM-MCXN947
 
 Builds the library for the board's Cortex-M33, flashes it, runs the oscillator, noise,
-sample-and-hold, VCA, LFO, ADSR, math, state-variable filter, biquad and ladder benchmark cases on the chip, and checks the result against the host build - one
+sample-and-hold, VCA, LFO, ADSR, math, state-variable filter, biquad, ladder and delay benchmark cases on the chip, and checks the result against the host build - one
 command, no manual steps.
 
 ```sh
@@ -129,6 +130,7 @@ Link against the `pcl::pcl` target; it carries the include path and the sample-t
 | Clock (tempo, 1..96 pulses per quarter, sample-accurate pulses with no drift, START/STOP) | `pcl_clock.h` | event | yes | yes | yes | [clock.md](docs/modules/clock.md) |
 | Arpeggiator (up, down, up-down, random, as played, chord; 1..4 octaves, latch, gate/division in pulses) | `pcl_arp.h` | event | yes | yes | yes | [arp.md](docs/modules/arp.md) |
 | Step sequencer (up to 64 steps; rests, ties, per-step gate, swing, transpose; forward/backward/ping-pong/random) | `pcl_seq.h` | event | yes | yes | yes | [sequencer.md](docs/modules/sequencer.md) |
+| Delay (echo, chorus, flanger, vibrato: tape-style glide, time modulation, feedback with tone and saturation, dry/wet mix; linear or Hermite interpolation; caller memory, optional 16-bit storage) | `pcl_delay.h` | audio (modulation at control rate) | yes | yes | yes | [delay.md](docs/modules/delay.md) |
 | Math: pitch and dB conversions, sin/cos, filter pre-warp `tan`, `tanh` | `pcl_math.h` | setters / audio | yes | yes | yes | [math.md](docs/modules/math.md) |
 
 Shared pieces: `pcl_types.h` (sample types, status codes, saturating fixed-point helpers),

@@ -15,7 +15,8 @@ typedef enum
     BENCH_MATH,
     BENCH_SVF,
     BENCH_BIQUAD,
-    BENCH_LADDER
+    BENCH_LADDER,
+    BENCH_DELAY
 } bench_kind_t;
 
 typedef enum
@@ -82,6 +83,10 @@ typedef struct
     int ld_mode; /* pcl_ladder_mode_t                                              */
     int ld_mod;  /* feed a noise buffer to the cutoff modulation input             */
     int ld_sat;  /* tanh in the feedback loop                                      */
+    /* delay */
+    int dl_hermite; /* Hermite interpolation instead of linear                         */
+    int dl_mod;     /* feed a noise buffer to the time modulation input                */
+    int dl_tone;    /* tone low-pass and tanh in the feedback loop                     */
 } bench_case_t;
 
 #define STATIC_CASE(name_, wf, hz_)                                                                \
@@ -135,6 +140,9 @@ typedef struct
 
 #define LADDER_CASE(name_, mode_, mod_, sat_)                                                      \
     { .name = name_, .kind = BENCH_LADDER, .ld_mode = mode_, .ld_mod = mod_, .ld_sat = sat_ }
+
+#define DELAY_CASE(name_, hermite_, mod_, tone_)                                                   \
+    { .name = name_, .kind = BENCH_DELAY, .dl_hermite = hermite_, .dl_mod = mod_, .dl_tone = tone_ }
 
 #define MATH_CASE(name_, fn_) { .name = name_, .kind = BENCH_MATH, .math_fn = fn_ }
 
@@ -203,6 +211,10 @@ static const bench_case_t g_cases[] = {
     LADDER_CASE("ladder_mod", PCL_LADDER_LP24, 1, 0),
     LADDER_CASE("ladder_saturate", PCL_LADDER_LP24, 0, 1),
     LADDER_CASE("ladder_mod_saturate", PCL_LADDER_LP24, 1, 1),
+    DELAY_CASE("delay_linear", 0, 0, 0),
+    DELAY_CASE("delay_linear_tone", 0, 0, 1),
+    DELAY_CASE("delay_hermite_mod", 1, 1, 0),
+    DELAY_CASE("delay_hermite_mod_tone", 1, 1, 1),
 };
 
 #define BENCH_SAMPLE_RATE_HZ 48000u
@@ -720,6 +732,62 @@ static pcl_status_t bench_run_ladder(
     return PCL_OK;
 }
 
+/* Delay cases: 48 kHz, 20 ms of a 50 ms line (native storage), feedback 0.6, mix 0.5, noise in;
+   modulated: +-5 ms of noise on the time; tone: 3 kHz low-pass and tanh in the loop. */
+#define BENCH_DELAY_MAX_MS 50u
+#define BENCH_DELAY_BYTES (50u * 48u * sizeof(pcl_sample_t) + 64u)
+
+static pcl_status_t bench_run_delay(
+    const bench_case_t *c, pcl_sample_t *out, pcl_bench_clock_fn clock, pcl_bench_result_t *result)
+{
+    static unsigned char mem[BENCH_DELAY_BYTES];
+    pcl_delay_t          dl;
+    pcl_delay_config_t   cfg;
+    pcl_sample_t         in[PCL_BENCH_BLOCK];
+    pcl_sample_t         mod[PCL_BENCH_BLOCK];
+    uint32_t             seed = 0x2545F491u;
+    size_t               pos;
+    pcl_status_t         st;
+
+    cfg.sample_rate_hz = BENCH_SAMPLE_RATE_HZ;
+    cfg.max_delay_ms = BENCH_DELAY_MAX_MS;
+    cfg.time_ms = PCL_MS(20.0);
+    cfg.mod_depth_ms = PCL_MS(5.0);
+    cfg.glide_ms = 0u;
+    cfg.feedback = PCL_COEF(0.6);
+    cfg.tone_hz = c->dl_tone ? PCL_HZ(3000.0) : PCL_HZ(0.0);
+    cfg.saturate = c->dl_tone;
+    cfg.mix = PCL_COEF(0.5);
+    cfg.interp = c->dl_hermite ? PCL_DELAY_HERMITE : PCL_DELAY_LINEAR;
+    cfg.storage = PCL_DELAY_STORE_NATIVE;
+    st = pcl_delay_init(&dl, &cfg, mem, sizeof mem);
+    if (st != PCL_OK)
+        return st;
+
+    timing_start(result);
+    for (pos = 0; pos < PCL_BENCH_FRAMES; pos += PCL_BENCH_BLOCK)
+    {
+        size_t   i;
+        uint32_t t0 = 0, t1 = 0;
+
+        for (i = 0; i < PCL_BENCH_BLOCK; i++)
+        {
+            in[i] = bench_noise(&seed);
+            mod[i] = bench_noise(&seed);
+        }
+        if (clock != NULL)
+            t0 = clock();
+        pcl_delay_process(&dl, in, out + pos, c->dl_mod ? mod : NULL, PCL_BENCH_BLOCK);
+        if (clock != NULL)
+        {
+            t1 = clock();
+            timing_add(result, t1 - t0);
+        }
+    }
+    timing_finish(result, clock);
+    return PCL_OK;
+}
+
 /* Biquad cases: 48 kHz, cutoff 1.2 kHz, Q 2, +6 dB, noise in. */
 #define BENCH_BQ_CUTOFF_HZ 1200.0
 #define BENCH_BQ_Q 2.0
@@ -1011,6 +1079,8 @@ pcl_status_t pcl_bench_run(
         return bench_run_biquad(&g_cases[id], out, clock, result);
     case BENCH_LADDER:
         return bench_run_ladder(&g_cases[id], out, clock, result);
+    case BENCH_DELAY:
+        return bench_run_delay(&g_cases[id], out, clock, result);
     default:
         return bench_run_osc(&g_cases[id], out, clock, result);
     }

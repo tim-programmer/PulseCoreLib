@@ -7,6 +7,7 @@
  *     render svf   <outdir> [seconds] [seed]
  *     render biquad <outdir> [seconds] [seed]
  *     render ladder <outdir> [seconds] [seed]
+ *     render delay <outdir> [seconds] [seed]
  *
  * Writes <outdir>/white.wav, pink.wav and brown.wav (default 5 seconds each), plus
  * sah_pitch.wav and sah_pitch_slewed.wav: a saw oscillator whose pitch input is driven by
@@ -30,6 +31,10 @@
  * resonance 0.8, swept by an ADSR, into a VCA), ladder_selfosc (resonance 1.1 with saturate: the
  * filter starts oscillating from a tiny click, at 440 Hz then 880 Hz from 1 s) and ladder_modes
  * (a saw at 110 Hz through each of the eight modes in turn, cutoff 800 Hz, resonance 0.5).
+ * `delay` writes three patches: delay_echo (saw plucks into a 375 ms echo with feedback 0.55 and a
+ * 2.5 kHz tone control), delay_chorus (a saw through a 15 ms delay swept +-4 ms by a 0.8 Hz LFO,
+ * mixed half wet) and delay_flanger (white noise through a 2.5 ms delay swept +-2 ms by a 0.25 Hz
+ * LFO with feedback 0.7).
  *
  * `events` writes three patches that run the whole event chain into a voice (saw -> state-variable
  * low-pass -> VCA, with a filter and an amplitude envelope driven by the same note events):
@@ -1027,6 +1032,167 @@ static int render_ladder(const char *dir, double seconds)
         && render_ladder_patch(dir, LADDER_MODES, "ladder_modes.wav", frames);
 }
 
+/* ---- Delay patches ---- */
+
+typedef enum
+{
+    DELAY_ECHO,
+    DELAY_CHORUS,
+    DELAY_FLANGER
+} delay_patch_t;
+
+#define DELAY_PATCH_MAX_MS 500u
+#define DELAY_INPUT_GAIN 0.4
+
+static int render_delay_patch(
+    const char *dir, delay_patch_t kind, const char *file, uint32_t frames, uint32_t seed)
+{
+    static const double  pluck_times[] = { 0.0, 0.12, 1.2, 1.32, 2.4, 2.52 };
+    static unsigned char mem[DELAY_PATCH_MAX_MS * 48u * sizeof(pcl_sample_t) + 64u];
+    pcl_delay_config_t   dcfg;
+    pcl_delay_t          dl;
+    pcl_osc_config_t     ocfg;
+    pcl_osc_t            osc;
+    pcl_noise_config_t   ncfg;
+    pcl_noise_t          noise;
+    pcl_lfo_config_t     lcfg;
+    pcl_lfo_t            lfo;
+    pcl_adsr_config_t    acfg;
+    pcl_adsr_t           aenv;
+    pcl_vca_config_t     vcfg;
+    pcl_vca_t            vca;
+    pcl_sample_t         audio[BLOCK_FRAMES];
+    pcl_sample_t         mod[BLOCK_FRAMES];
+    pcl_sample_t         amp[BLOCK_FRAMES];
+    pcl_sample_t         out[BLOCK_FRAMES];
+    pcl_event_t          events[16];
+    int16_t              pcm[BLOCK_FRAMES];
+    char                 path[PATH_MAX_LEN];
+    uint32_t             done;
+    size_t               i;
+    FILE                *f;
+
+    dcfg.sample_rate_hz = SAMPLE_RATE_HZ;
+    dcfg.max_delay_ms = DELAY_PATCH_MAX_MS;
+    dcfg.glide_ms = 0u;
+    dcfg.saturate = 0;
+    dcfg.storage = PCL_DELAY_STORE_NATIVE;
+    switch (kind)
+    {
+    case DELAY_ECHO:
+        dcfg.time_ms = hz_from_double(375.0);
+        dcfg.mod_depth_ms = PCL_MS(0.0);
+        dcfg.feedback = coef_from_double(0.55);
+        dcfg.tone_hz = hz_from_double(2500.0);
+        dcfg.mix = coef_from_double(0.4);
+        dcfg.interp = PCL_DELAY_LINEAR;
+        break;
+    case DELAY_CHORUS:
+        dcfg.time_ms = hz_from_double(15.0);
+        dcfg.mod_depth_ms = hz_from_double(4.0);
+        dcfg.feedback = PCL_COEF(0.0);
+        dcfg.tone_hz = PCL_HZ(0.0);
+        dcfg.mix = coef_from_double(0.5);
+        dcfg.interp = PCL_DELAY_HERMITE;
+        break;
+    default: /* DELAY_FLANGER */
+        dcfg.time_ms = hz_from_double(2.5);
+        dcfg.mod_depth_ms = hz_from_double(2.0);
+        dcfg.feedback = coef_from_double(0.7);
+        dcfg.tone_hz = PCL_HZ(0.0);
+        dcfg.mix = coef_from_double(0.5);
+        dcfg.interp = PCL_DELAY_HERMITE;
+        break;
+    }
+    ocfg.sample_rate_hz = SAMPLE_RATE_HZ;
+    ocfg.waveform = PCL_OSC_SAW;
+    ocfg.frequency = hz_from_double(kind == DELAY_ECHO ? 330.0 : 220.0);
+    ocfg.pitch_depth_oct = PCL_OCT(0.0);
+    ocfg.pulse_width = PCL_COEF(0.5);
+    ocfg.pwm_depth = PCL_COEF(0.0);
+    ncfg.sample_rate_hz = SAMPLE_RATE_HZ;
+    ncfg.colour = PCL_NOISE_WHITE;
+    ncfg.seed = seed;
+    lcfg.sample_rate_hz = SAMPLE_RATE_HZ;
+    lcfg.shape = PCL_LFO_SINE;
+    lcfg.frequency = hz_from_double(kind == DELAY_CHORUS ? 0.8 : 0.25);
+    lcfg.rate_depth_oct = PCL_OCT(0.0);
+    lcfg.pulse_width = PCL_COEF(0.5);
+    lcfg.unipolar = 0;
+    lcfg.start_phase = 0u;
+    lcfg.seed = seed;
+    acfg.sample_rate_hz = SAMPLE_RATE_HZ;
+    acfg.attack_ms = 2;
+    acfg.decay_ms = 150;
+    acfg.release_ms = 80;
+    acfg.sustain = coef_from_double(0.3);
+    acfg.attack_curve = acfg.decay_curve = acfg.release_curve = coef_from_double(0.5);
+    acfg.run_through = 0;
+    vcfg.sample_rate_hz = SAMPLE_RATE_HZ;
+    vcfg.gain = PCL_COEF(1.0);
+    if (pcl_delay_init(&dl, &dcfg, mem, sizeof mem) != PCL_OK || pcl_osc_init(&osc, &ocfg) != PCL_OK
+        || pcl_noise_init(&noise, &ncfg) != PCL_OK || pcl_lfo_init(&lfo, &lcfg) != PCL_OK
+        || pcl_adsr_init(&aenv, &acfg) != PCL_OK || pcl_vca_init(&vca, &vcfg) != PCL_OK)
+    {
+        fprintf(stderr, "delay patch configuration rejected\n");
+        return 0;
+    }
+
+    f = open_wav(dir, file, frames, path);
+    if (f == NULL)
+        return 0;
+    for (done = 0; done < frames;)
+    {
+        const size_t n = (frames - done < BLOCK_FRAMES) ? (frames - done) : BLOCK_FRAMES;
+
+        if (kind == DELAY_FLANGER)
+            pcl_noise_process(&noise, audio, n);
+        else
+            pcl_osc_process(&osc, audio, NULL, NULL, NULL, NULL, n);
+        for (i = 0; i < n; i++)
+            audio[i] = sample_from_double(sample_to_double(audio[i]) * DELAY_INPUT_GAIN);
+        if (kind == DELAY_ECHO)
+        {
+            const size_t cnt = note_events(
+                pluck_times, sizeof pluck_times / sizeof pluck_times[0], done, n, events);
+            pcl_adsr_process(&aenv, amp, NULL, events, cnt, n);
+            pcl_vca_process(&vca, audio, audio, amp, n);
+            pcl_delay_process(&dl, audio, out, NULL, n);
+        }
+        else
+        {
+            pcl_lfo_process(&lfo, mod, NULL, n);
+            pcl_delay_process(&dl, audio, out, mod, n);
+        }
+        for (i = 0; i < n; i++)
+            pcm[i]
+                = pcm16_from_double(sample_to_double(out[i]) * (kind == DELAY_FLANGER ? 0.8 : 1.5));
+        if (!write_pcm16(f, pcm, n))
+        {
+            perror(path);
+            fclose(f);
+            return 0;
+        }
+        done += (uint32_t)n;
+    }
+    if (fclose(f) != 0)
+    {
+        perror(path);
+        return 0;
+    }
+    printf("wrote %s\n", path);
+    return 1;
+}
+
+static int render_delay(const char *dir, double seconds, uint32_t seed)
+{
+    const uint32_t frames = (uint32_t)(seconds * (double)SAMPLE_RATE_HZ);
+
+    return render_delay_patch(dir, DELAY_ECHO, "delay_echo.wav", frames, seed)
+        && render_delay_patch(dir, DELAY_CHORUS, "delay_chorus.wav", frames, seed)
+        && render_delay_patch(dir, DELAY_FLANGER, "delay_flanger.wav", frames, seed);
+}
+
 /* ---- Biquad patches ---- */
 
 #define BQ_INPUT_GAIN 0.25 /* headroom: a +12 dB boost of full-scale noise would saturate */
@@ -1552,10 +1718,10 @@ int main(int argc, char **argv)
         || (strcmp(argv[1], "noise") != 0 && strcmp(argv[1], "lfo") != 0
             && strcmp(argv[1], "adsr") != 0 && strcmp(argv[1], "svf") != 0
             && strcmp(argv[1], "biquad") != 0 && strcmp(argv[1], "events") != 0
-            && strcmp(argv[1], "ladder") != 0))
+            && strcmp(argv[1], "ladder") != 0 && strcmp(argv[1], "delay") != 0))
     {
         fprintf(stderr,
-            "usage: %s noise|lfo|adsr|svf|biquad|ladder|events <outdir> [seconds] [seed]\n",
+            "usage: %s noise|lfo|adsr|svf|biquad|ladder|delay|events <outdir> [seconds] [seed]\n",
             argv[0]);
         return 2;
     }
@@ -1581,6 +1747,8 @@ int main(int argc, char **argv)
         return render_biquad(argv[2], seconds, seed) ? 0 : 1;
     if (strcmp(argv[1], "ladder") == 0)
         return render_ladder(argv[2], seconds) ? 0 : 1;
+    if (strcmp(argv[1], "delay") == 0)
+        return render_delay(argv[2], seconds, seed) ? 0 : 1;
     if (strcmp(argv[1], "events") == 0)
         return render_events(argv[2], seconds, seed) ? 0 : 1;
     return render_noise(argv[2], seconds, seed) ? 0 : 1;
