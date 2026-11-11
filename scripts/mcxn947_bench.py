@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build, flash, run and verify the benchmark (oscillator, noise, S&H, VCA, LFO, ADSR, math, SVF, biquad, ladder, delay) on a FRDM-MCXN947.
+"""Build, flash, run and verify the benchmark (oscillator, noise, S&H, VCA, LFO, ADSR, math, SVF, biquad, ladder, delay, sampler) on a FRDM-MCXN947.
 
     .venv-tools/bin/python scripts/mcxn947_bench.py [--type q15|q31|float] [--no-build]
                                                     [--no-flash] [--port /dev/ttyACM1]

@@ -15,6 +15,7 @@ add_library(pcl STATIC
     osc/pcl_noise.c
     osc/pcl_osc.c
     osc/pcl_unison.c
+    sampler/pcl_sampler.c
 )
 add_library(pcl::pcl ALIAS pcl)
 

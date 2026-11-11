@@ -16,7 +16,8 @@ typedef enum
     BENCH_SVF,
     BENCH_BIQUAD,
     BENCH_LADDER,
-    BENCH_DELAY
+    BENCH_DELAY,
+    BENCH_SAMPLER
 } bench_kind_t;
 
 typedef enum
@@ -87,6 +88,9 @@ typedef struct
     int dl_hermite; /* Hermite interpolation instead of linear                         */
     int dl_mod;     /* feed a noise buffer to the time modulation input                */
     int dl_tone;    /* tone low-pass and tanh in the feedback loop                     */
+    /* sampler */
+    int sm_hermite; /* Hermite interpolation instead of linear                         */
+    int sm_mod;     /* feed a noise buffer to pitch_mod                                */
 } bench_case_t;
 
 #define STATIC_CASE(name_, wf, hz_)                                                                \
@@ -143,6 +147,9 @@ typedef struct
 
 #define DELAY_CASE(name_, hermite_, mod_, tone_)                                                   \
     { .name = name_, .kind = BENCH_DELAY, .dl_hermite = hermite_, .dl_mod = mod_, .dl_tone = tone_ }
+
+#define SAMPLER_CASE(name_, hermite_, mod_)                                                        \
+    { .name = name_, .kind = BENCH_SAMPLER, .sm_hermite = hermite_, .sm_mod = mod_ }
 
 #define MATH_CASE(name_, fn_) { .name = name_, .kind = BENCH_MATH, .math_fn = fn_ }
 
@@ -215,6 +222,9 @@ static const bench_case_t g_cases[] = {
     DELAY_CASE("delay_linear_tone", 0, 0, 1),
     DELAY_CASE("delay_hermite_mod", 1, 1, 0),
     DELAY_CASE("delay_hermite_mod_tone", 1, 1, 1),
+    SAMPLER_CASE("sampler_linear", 0, 0),
+    SAMPLER_CASE("sampler_hermite", 1, 0),
+    SAMPLER_CASE("sampler_hermite_mod", 1, 1),
 };
 
 #define BENCH_SAMPLE_RATE_HZ 48000u
@@ -788,6 +798,68 @@ static pcl_status_t bench_run_delay(
     return PCL_OK;
 }
 
+/* Sampler cases: a 4096-frame native sine table (32 cycles) looped forward, played 7 semitones up
+   (a non-integer step) at 48 kHz; modulated: noise on pitch_mod at depth 1 octave. */
+#define BENCH_SAMPLER_FRAMES 4096u
+#define BENCH_SAMPLER_CYCLES 32u
+
+static pcl_status_t bench_run_sampler(
+    const bench_case_t *c, pcl_sample_t *out, pcl_bench_clock_fn clock, pcl_bench_result_t *result)
+{
+    static pcl_sample_t  table[BENCH_SAMPLER_FRAMES];
+    pcl_sampler_sample_t smp;
+    pcl_sampler_config_t cfg;
+    pcl_sampler_t        s;
+    pcl_sample_t         mod[PCL_BENCH_BLOCK];
+    uint32_t             seed = 0x2545F491u;
+    size_t               pos, i;
+    pcl_status_t         st;
+
+    for (i = 0; i < BENCH_SAMPLER_FRAMES; i++)
+        table[i] = pcl_sin(
+            (uint32_t)(i * (BENCH_SAMPLER_CYCLES * (0x100000000ull / BENCH_SAMPLER_FRAMES))));
+    smp.data = table;
+    smp.frames = BENCH_SAMPLER_FRAMES;
+    smp.format = PCL_SAMPLER_NATIVE;
+    smp.sample_rate_hz = BENCH_SAMPLE_RATE_HZ;
+    smp.root_note = 60;
+    smp.loop_mode = PCL_SAMPLER_FORWARD;
+    smp.loop_start = 0;
+    smp.loop_end = BENCH_SAMPLER_FRAMES;
+    cfg.sample_rate_hz = BENCH_SAMPLE_RATE_HZ;
+    cfg.sample = &smp;
+    cfg.interp = c->sm_hermite ? PCL_SAMPLER_HERMITE : PCL_SAMPLER_LINEAR;
+    cfg.pitch_depth_oct = PCL_OCT(1.0);
+    cfg.gain = PCL_COEF(0.8);
+    cfg.velocity_sens = PCL_COEF(0.0);
+    cfg.start_offset = 0;
+    cfg.reverse = 0;
+    cfg.declick_ms = 2;
+    st = pcl_sampler_init(&s, &cfg);
+    if (st != PCL_OK)
+        return st;
+    pcl_sampler_note_on(&s, 67, 100);
+
+    timing_start(result);
+    for (pos = 0; pos < PCL_BENCH_FRAMES; pos += PCL_BENCH_BLOCK)
+    {
+        uint32_t t0 = 0, t1 = 0;
+
+        for (i = 0; i < PCL_BENCH_BLOCK; i++)
+            mod[i] = bench_noise(&seed);
+        if (clock != NULL)
+            t0 = clock();
+        pcl_sampler_process(&s, out + pos, c->sm_mod ? mod : NULL, NULL, 0, PCL_BENCH_BLOCK);
+        if (clock != NULL)
+        {
+            t1 = clock();
+            timing_add(result, t1 - t0);
+        }
+    }
+    timing_finish(result, clock);
+    return PCL_OK;
+}
+
 /* Biquad cases: 48 kHz, cutoff 1.2 kHz, Q 2, +6 dB, noise in. */
 #define BENCH_BQ_CUTOFF_HZ 1200.0
 #define BENCH_BQ_Q 2.0
@@ -1081,6 +1153,8 @@ pcl_status_t pcl_bench_run(
         return bench_run_ladder(&g_cases[id], out, clock, result);
     case BENCH_DELAY:
         return bench_run_delay(&g_cases[id], out, clock, result);
+    case BENCH_SAMPLER:
+        return bench_run_sampler(&g_cases[id], out, clock, result);
     default:
         return bench_run_osc(&g_cases[id], out, clock, result);
     }

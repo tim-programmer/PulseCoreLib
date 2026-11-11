@@ -11,6 +11,21 @@
 #include "core/pcl_tables.h"
 #include "pcl/pcl_types.h"
 
+/*
+ * Integer path, every build (the sampler uses it in float builds too so positions match).
+ * (2^f - 1) * 2^16, rounded, for f in [0, 1) given as Q0.28 (the fraction of a Q4.28 octave);
+ * 32-bit arithmetic only.
+ */
+PCL_INLINE uint32_t pcl_exp2m1_q16(uint32_t f)
+{
+    const uint32_t idx = f >> 20; /* top 8 bits of the fraction */
+    const uint32_t frac = (f >> 4) & 0xFFFFu;
+    const uint32_t lo = pcl_exp2_tab[idx];
+    const uint32_t hi = pcl_exp2_tab[idx + 1u];
+
+    return lo + (((hi - lo) * frac + 0x8000u) >> 16);
+}
+
 #if PCL_SAMPLE_TYPE == PCL_FLOAT
 
 /*
@@ -50,19 +65,6 @@ PCL_INLINE float pcl_octave_scale_f(float f, float oct)
 
 #else
 
-/*
- * (2^f - 1) * 2^16, rounded, for f in [0, 1) given as Q0.28 (the fraction of a Q4.28 octave);
- * 32-bit arithmetic only.
- */
-PCL_INLINE uint32_t pcl_exp2m1_q16(uint32_t f)
-{
-    const uint32_t idx = f >> 20; /* top 8 bits of the fraction */
-    const uint32_t frac = (f >> 4) & 0xFFFFu;
-    const uint32_t lo = pcl_exp2_tab[idx];
-    const uint32_t hi = pcl_exp2_tab[idx + 1u];
-
-    return lo + (((hi - lo) * frac + 0x8000u) >> 16);
-}
 
 /*
  * base * 2^oct for an unsigned 32-bit `base`, oct in Q4.28 (range [-8, 8)), 32-bit arithmetic only

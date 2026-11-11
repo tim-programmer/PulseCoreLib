@@ -400,9 +400,9 @@ static void delay_chunk(pcl_delay_t *dl, const pcl_sample_t *in, pcl_sample_t *o
                 v = yy;
             }
             /* x keeps its full precision: only the feedback goes through Q4.28. */
-            wv = pcl_dl_saturate((int64_t)x
+            wv = pcl_interp_sat((int64_t)x
                 + pcl_wide64_to_sample(((int64_t)fb * v + PCL_CUTOFF_ROUND30) >> PCL_Q30_SHIFT));
-            out[i] = pcl_dl_saturate((int64_t)x
+            out[i] = pcl_interp_sat((int64_t)x
                 + (((int64_t)mix * ((int64_t)y - x) + PCL_CUTOFF_ROUND30) >> PCL_Q30_SHIFT));
         }
 #endif

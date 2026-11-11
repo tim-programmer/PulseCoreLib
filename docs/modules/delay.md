@@ -2,7 +2,8 @@
 
 Files: `include/pcl/pcl_delay.h`, `src/fx/pcl_delay.c`, `tests/test_delay.c`, the shared internal header
 `src/core/pcl_delayline.h` (circular buffer, storage formats, linear and Hermite reads; meant for the
-reverb and the sampler too), the `delay` subcommand of `tools/render.c`, and the `delay_*` cases of
+reverb and the sampler too; its interpolation kernels moved to `src/core/pcl_interp.h` when the sampler
+was added, verified bit-identical), the `delay` subcommand of `tools/render.c`, and the `delay_*` cases of
 `platform/bench/pcl_bench.c`.
 
 **Status: implemented in float, Q15 and Q31; all tests pass in all three builds** (Clang with ASan +

@@ -8,6 +8,7 @@
  *     render biquad <outdir> [seconds] [seed]
  *     render ladder <outdir> [seconds] [seed]
  *     render delay <outdir> [seconds] [seed]
+ *     render sampler <outdir> [seconds] [seed]
  *
  * Writes <outdir>/white.wav, pink.wav and brown.wav (default 5 seconds each), plus
  * sah_pitch.wav and sah_pitch_slewed.wav: a saw oscillator whose pitch input is driven by
@@ -35,6 +36,10 @@
  * 2.5 kHz tone control), delay_chorus (a saw through a 15 ms delay swept +-4 ms by a 0.8 Hz LFO,
  * mixed half wet) and delay_flanger (white noise through a 2.5 ms delay swept +-2 ms by a 0.25 Hz
  * LFO with feedback 0.7).
+ * `sampler` writes three patches from samples synthesized here (no audio files are committed):
+ * sampler_melody (a plucked tone, one-shot, played as a seven-note melody), sampler_sustain (a tone
+ * at 375 Hz with a 128-cycle sustain loop and a decaying release, held 1.2 s then released) and
+ * sampler_pingpong (a slowly beating pad looped back and forth, two notes a fifth apart in turn).
  *
  * `events` writes three patches that run the whole event chain into a voice (saw -> state-variable
  * low-pass -> VCA, with a filter and an amplitude envelope driven by the same note events):
@@ -1193,6 +1198,172 @@ static int render_delay(const char *dir, double seconds, uint32_t seed)
         && render_delay_patch(dir, DELAY_FLANGER, "delay_flanger.wav", frames, seed);
 }
 
+/* ---- Sampler patches ---- */
+
+typedef enum
+{
+    SAMPLER_MELODY,
+    SAMPLER_SUSTAIN,
+    SAMPLER_PINGPONG
+} sampler_patch_t;
+
+#define SMP_DATA_FRAMES 48000u
+#define SMP_PI 3.14159265358979323846
+
+static int16_t g_smp_data[SMP_DATA_FRAMES];
+
+/* Fills g_smp_data with the patch's sample and describes it in *x. */
+static void synth_sample(sampler_patch_t kind, pcl_sampler_sample_t *x)
+{
+    size_t i;
+    for (i = 0; i < SMP_DATA_FRAMES; i++)
+    {
+        const double t = (double)i / (double)SAMPLE_RATE_HZ;
+        double       v = 0.0, env;
+        int          h;
+        if (kind == SAMPLER_MELODY) /* C4 pluck: 8 harmonics at 1/k, decaying */
+        {
+            for (h = 1; h <= 8; h++)
+                v += sin(2.0 * SMP_PI * 261.6256 * h * t) / h * exp(-t * (3.0 + h));
+            env = t < 0.002 ? t / 0.002 : 1.0;
+            v *= 0.45 * env;
+        }
+        else if (kind
+            == SAMPLER_SUSTAIN) /* 375 Hz (128 samples per cycle): attack, steady, decay */
+        {
+            for (h = 1; h <= 5; h++)
+                v += sin(2.0 * SMP_PI * 375.0 * h * t) / (h * h);
+            env = t < 0.05 ? t / 0.05 : (t < 0.5 ? 1.0 : exp(-(t - 0.5) * 6.0));
+            v *= 0.5 * env;
+        }
+        else /* pad: two detuned partials beating at 0.5 Hz */
+            v = 0.3 * (sin(2.0 * SMP_PI * 220.0 * t) + sin(2.0 * SMP_PI * 220.5 * t))
+                * (t < 0.1 ? t / 0.1 : 1.0);
+        g_smp_data[i] = (int16_t)floor(v * 32767.0 + 0.5);
+    }
+    x->data = g_smp_data;
+    x->frames = SMP_DATA_FRAMES;
+    x->format = PCL_SAMPLER_Q15;
+    x->sample_rate_hz = SAMPLE_RATE_HZ;
+    x->root_note = kind == SAMPLER_SUSTAIN ? 66 : (kind == SAMPLER_MELODY ? 60 : 57);
+    x->loop_mode = kind == SAMPLER_MELODY
+        ? PCL_SAMPLER_ONE_SHOT
+        : (kind == SAMPLER_SUSTAIN ? PCL_SAMPLER_SUSTAIN : PCL_SAMPLER_PING_PONG);
+    /* sustain: 4096 .. 20480 is 128 whole cycles of the 375 Hz tone; pad: 0.2 .. 0.8 s */
+    x->loop_start = kind == SAMPLER_SUSTAIN ? 4096u : 9600u;
+    x->loop_end = kind == SAMPLER_SUSTAIN ? 20480u : 38400u;
+}
+
+static int render_sampler_patch(
+    const char *dir, sampler_patch_t kind, const char *file, uint32_t frames)
+{
+    static const int     melody[] = { 0, 4, 7, 12, 7, 4, 0 };
+    pcl_sampler_sample_t x;
+    pcl_sampler_config_t cfg;
+    pcl_sampler_t        s;
+    pcl_sample_t         out[BLOCK_FRAMES];
+    int16_t              pcm[BLOCK_FRAMES];
+    char                 path[PATH_MAX_LEN];
+    uint32_t             done;
+    size_t               i;
+    FILE                *f;
+
+    synth_sample(kind, &x);
+    cfg.sample_rate_hz = SAMPLE_RATE_HZ;
+    cfg.sample = &x;
+    cfg.interp = PCL_SAMPLER_HERMITE;
+    cfg.pitch_depth_oct = PCL_OCT(0.0);
+    cfg.gain = PCL_COEF(1.0);
+    cfg.velocity_sens = coef_from_double(0.3);
+    cfg.start_offset = 0;
+    cfg.reverse = 0;
+    cfg.declick_ms = 3;
+    if (pcl_sampler_init(&s, &cfg) != PCL_OK)
+    {
+        fprintf(stderr, "sampler patch configuration rejected\n");
+        return 0;
+    }
+    f = open_wav(dir, file, frames, path);
+    if (f == NULL)
+        return 0;
+    for (done = 0; done < frames;)
+    {
+        const size_t n = (frames - done < BLOCK_FRAMES) ? (frames - done) : BLOCK_FRAMES;
+        pcl_event_t  ev[8];
+        size_t       cnt = 0, k;
+
+        for (k = 0; k < 7u; k++)
+        {
+            uint32_t on, off;
+            uint8_t  note;
+            if (kind == SAMPLER_MELODY)
+            {
+                on = (uint32_t)((double)k * 0.35 * SAMPLE_RATE_HZ);
+                off = on + (uint32_t)(0.3 * SAMPLE_RATE_HZ);
+                note = (uint8_t)(60 + melody[k]);
+            }
+            else if (kind == SAMPLER_SUSTAIN)
+            {
+                if (k > 0u)
+                    break;
+                on = (uint32_t)(0.1 * SAMPLE_RATE_HZ);
+                off = (uint32_t)(1.3 * SAMPLE_RATE_HZ);
+                note = 66;
+            }
+            else
+            {
+                if (k > 1u)
+                    break;
+                on = (uint32_t)((0.1 + 1.6 * (double)k) * SAMPLE_RATE_HZ);
+                off = on + (uint32_t)(1.4 * SAMPLE_RATE_HZ);
+                note = (uint8_t)(57 + 7 * (int)k);
+            }
+            if (on >= done && on < done + n)
+            {
+                ev[cnt].offset = (uint16_t)(on - done);
+                ev[cnt].type = PCL_EVT_NOTE_ON;
+                ev[cnt].note = note;
+                ev[cnt].velocity = 110;
+                cnt++;
+            }
+            if (off >= done && off < done + n)
+            {
+                ev[cnt].offset = (uint16_t)(off - done);
+                ev[cnt].type = PCL_EVT_NOTE_OFF;
+                ev[cnt].note = note;
+                ev[cnt].velocity = 0;
+                cnt++;
+            }
+        }
+        pcl_sampler_process(&s, out, NULL, ev, cnt, n);
+        for (i = 0; i < n; i++)
+            pcm[i] = pcm16_from_double(sample_to_double(out[i]));
+        if (!write_pcm16(f, pcm, n))
+        {
+            perror(path);
+            fclose(f);
+            return 0;
+        }
+        done += (uint32_t)n;
+    }
+    if (fclose(f) != 0)
+    {
+        perror(path);
+        return 0;
+    }
+    printf("wrote %s\n", path);
+    return 1;
+}
+
+static int render_sampler(const char *dir, double seconds)
+{
+    const uint32_t frames = (uint32_t)(seconds * (double)SAMPLE_RATE_HZ);
+
+    return render_sampler_patch(dir, SAMPLER_MELODY, "sampler_melody.wav", frames)
+        && render_sampler_patch(dir, SAMPLER_SUSTAIN, "sampler_sustain.wav", frames)
+        && render_sampler_patch(dir, SAMPLER_PINGPONG, "sampler_pingpong.wav", frames);
+}
+
 /* ---- Biquad patches ---- */
 
 #define BQ_INPUT_GAIN 0.25 /* headroom: a +12 dB boost of full-scale noise would saturate */
@@ -1718,10 +1889,12 @@ int main(int argc, char **argv)
         || (strcmp(argv[1], "noise") != 0 && strcmp(argv[1], "lfo") != 0
             && strcmp(argv[1], "adsr") != 0 && strcmp(argv[1], "svf") != 0
             && strcmp(argv[1], "biquad") != 0 && strcmp(argv[1], "events") != 0
-            && strcmp(argv[1], "ladder") != 0 && strcmp(argv[1], "delay") != 0))
+            && strcmp(argv[1], "ladder") != 0 && strcmp(argv[1], "delay") != 0
+            && strcmp(argv[1], "sampler") != 0))
     {
         fprintf(stderr,
-            "usage: %s noise|lfo|adsr|svf|biquad|ladder|delay|events <outdir> [seconds] [seed]\n",
+            "usage: %s noise|lfo|adsr|svf|biquad|ladder|delay|sampler|events <outdir> [seconds] "
+            "[seed]\n",
             argv[0]);
         return 2;
     }
@@ -1749,6 +1922,8 @@ int main(int argc, char **argv)
         return render_ladder(argv[2], seconds) ? 0 : 1;
     if (strcmp(argv[1], "delay") == 0)
         return render_delay(argv[2], seconds, seed) ? 0 : 1;
+    if (strcmp(argv[1], "sampler") == 0)
+        return render_sampler(argv[2], seconds) ? 0 : 1;
     if (strcmp(argv[1], "events") == 0)
         return render_events(argv[2], seconds, seed) ? 0 : 1;
     return render_noise(argv[2], seconds, seed) ? 0 : 1;
