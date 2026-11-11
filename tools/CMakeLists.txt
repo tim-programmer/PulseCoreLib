@@ -45,6 +45,8 @@ if(PCL_BUILD_TESTS)
         COMMAND render delay ${CMAKE_CURRENT_BINARY_DIR}/render_smoke 0.2)
     add_test(NAME tool_render_sampler
         COMMAND render sampler ${CMAKE_CURRENT_BINARY_DIR}/render_smoke 0.5)
+    add_test(NAME tool_render_reverb
+        COMMAND render reverb ${CMAKE_CURRENT_BINARY_DIR}/render_smoke 0.3)
     # play_sample reads a file the render step wrote (exercises the WAV reader end to end).
     set_tests_properties(tool_render_sampler PROPERTIES FIXTURES_SETUP sampler_wav)
     add_test(NAME tool_play_sample

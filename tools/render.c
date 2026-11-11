@@ -9,6 +9,7 @@
  *     render ladder <outdir> [seconds] [seed]
  *     render delay <outdir> [seconds] [seed]
  *     render sampler <outdir> [seconds] [seed]
+ *     render reverb <outdir> [seconds] [seed]
  *
  * Writes <outdir>/white.wav, pink.wav and brown.wav (default 5 seconds each), plus
  * sah_pitch.wav and sah_pitch_slewed.wav: a saw oscillator whose pitch input is driven by
@@ -40,6 +41,10 @@
  * sampler_melody (a plucked tone, one-shot, played as a seven-note melody), sampler_sustain (a tone
  * at 375 Hz with a 128-cycle sustain loop and a decaying release, held 1.2 s then released) and
  * sampler_pingpong (a slowly beating pad looped back and forth, two notes a fifth apart in turn).
+ * `reverb` writes six stereo patches, each source through both variants (reverb_small_* with
+ * 16-bit lines, reverb_quality_* with native lines): *_snare (noise bursts, RT60 1.5 s, damped
+ * above 5 kHz), *_pad (a two-saw chord held 2 s, RT60 5 s, full modulation) and *_pluck (a
+ * plucked saw melody, RT60 2.5 s). Use 5 s or more to hear the tails.
  *
  * `events` writes three patches that run the whole event chain into a voice (saw -> state-variable
  * low-pass -> VCA, with a filter and an amplitude envelope driven by the same note events):
@@ -145,20 +150,20 @@ static void put_le32(unsigned char *p, uint32_t v)
     p[3] = (unsigned char)((v >> 24) & 0xFFu);
 }
 
-static int write_wav_header(FILE *f, uint32_t frames)
+static int write_wav_header(FILE *f, uint32_t frames, unsigned channels)
 {
     unsigned char  h[44];
-    const uint32_t data_bytes = frames * 2u;
+    const uint32_t data_bytes = frames * 2u * channels;
 
     memcpy(h + 0, "RIFF", 4);
     put_le32(h + 4, 36u + data_bytes);
     memcpy(h + 8, "WAVEfmt ", 8);
     put_le32(h + 16, 16u);
     put_le16(h + 20, 1u); /* PCM      */
-    put_le16(h + 22, 1u); /* channels */
+    put_le16(h + 22, channels);
     put_le32(h + 24, SAMPLE_RATE_HZ);
-    put_le32(h + 28, SAMPLE_RATE_HZ * 2u);
-    put_le16(h + 32, 2u);
+    put_le32(h + 28, SAMPLE_RATE_HZ * 2u * channels);
+    put_le16(h + 32, 2u * channels);
     put_le16(h + 34, 16u);
     memcpy(h + 36, "data", 4);
     put_le32(h + 40, data_bytes);
@@ -167,7 +172,7 @@ static int write_wav_header(FILE *f, uint32_t frames)
 
 static int write_pcm16(FILE *f, const int16_t *pcm, size_t n)
 {
-    unsigned char bytes[BLOCK_FRAMES * 2u];
+    unsigned char bytes[BLOCK_FRAMES * 4u]; /* up to a block of stereo frames */
     size_t        i;
 
     for (i = 0; i < n; i++)
@@ -175,7 +180,8 @@ static int write_pcm16(FILE *f, const int16_t *pcm, size_t n)
     return fwrite(bytes, 2, n, f) == n;
 }
 
-static FILE *open_wav(const char *dir, const char *name, uint32_t frames, char *path)
+static FILE *open_wav_channels(
+    const char *dir, const char *name, uint32_t frames, unsigned channels, char *path)
 {
     FILE *f;
 
@@ -190,13 +196,18 @@ static FILE *open_wav(const char *dir, const char *name, uint32_t frames, char *
         perror(path);
         return NULL;
     }
-    if (!write_wav_header(f, frames))
+    if (!write_wav_header(f, frames, channels))
     {
         perror(path);
         fclose(f);
         return NULL;
     }
     return f;
+}
+
+static FILE *open_wav(const char *dir, const char *name, uint32_t frames, char *path)
+{
+    return open_wav_channels(dir, name, frames, 1u, path);
 }
 
 /* ---- Noise colours ---- */
@@ -1198,6 +1209,206 @@ static int render_delay(const char *dir, double seconds, uint32_t seed)
         && render_delay_patch(dir, DELAY_FLANGER, "delay_flanger.wav", frames, seed);
 }
 
+/* ---- Reverb patches ---- */
+
+typedef enum
+{
+    REVERB_SNARE,
+    REVERB_PAD,
+    REVERB_PLUCK
+} reverb_patch_t;
+
+#define REVERB_PATCH_MAX_PREDELAY_MS 50u
+#define REVERB_PLUCK_STEP_S 0.25
+#define REVERB_OUTPUT_GAIN 1.4
+
+static unsigned char g_reverb_mem[128u * 1024u];
+
+static int render_reverb_patch(const char *dir, pcl_reverb_variant_t variant, reverb_patch_t kind,
+    const char *file, uint32_t frames, uint32_t seed)
+{
+    static const double snare_times[] = { 0.0, 0.05, 0.6, 0.65, 1.2, 1.25, 1.5, 1.55 };
+    static const double pad_times[] = { 0.0, 2.0 };
+    static const double pluck_times[] = { 0.0, 0.05, 0.25, 0.3, 0.5, 0.55, 0.75, 0.8, 1.0, 1.05,
+        1.25, 1.3, 1.5, 1.55, 1.75, 1.8 };
+    static const double pluck_hz[] = { 330.0, 392.0, 440.0, 494.0, 587.3, 494.0, 440.0, 392.0 };
+    const double       *times
+        = kind == REVERB_SNARE ? snare_times : (kind == REVERB_PAD ? pad_times : pluck_times);
+    const size_t        n_times = kind == REVERB_SNARE
+        ? sizeof snare_times / sizeof snare_times[0]
+        : (kind == REVERB_PAD ? sizeof pad_times / sizeof pad_times[0]
+                              : sizeof pluck_times / sizeof pluck_times[0]);
+    pcl_reverb_config_t rcfg;
+    pcl_reverb_t        rv;
+    pcl_osc_config_t    ocfg;
+    pcl_osc_t           osc, osc2;
+    pcl_noise_config_t  ncfg;
+    pcl_noise_t         noise;
+    pcl_adsr_config_t   acfg;
+    pcl_adsr_t          aenv;
+    pcl_vca_config_t    vcfg;
+    pcl_vca_t           vca;
+    pcl_sample_t        audio[BLOCK_FRAMES];
+    pcl_sample_t        audio2[BLOCK_FRAMES];
+    pcl_sample_t        amp[BLOCK_FRAMES];
+    pcl_sample_t        out_l[BLOCK_FRAMES];
+    pcl_sample_t        out_r[BLOCK_FRAMES];
+    pcl_event_t         events[16];
+    int16_t             pcm[2u * BLOCK_FRAMES];
+    char                path[PATH_MAX_LEN];
+    double              peak = 0.0;
+    uint32_t            done;
+    size_t              i;
+    FILE               *f;
+
+    rcfg.sample_rate_hz = SAMPLE_RATE_HZ;
+    rcfg.variant = variant;
+    rcfg.size = PCL_COEF(1.0);
+    rcfg.max_predelay_ms = REVERB_PATCH_MAX_PREDELAY_MS;
+    rcfg.width = PCL_COEF(1.0);
+    rcfg.freeze = 0;
+    /* SMALL as on a small MCU (16-bit lines), QUALITY with native lines. */
+    rcfg.storage = variant == PCL_REVERB_SMALL ? PCL_DELAY_STORE_Q15 : PCL_DELAY_STORE_NATIVE;
+    acfg.sample_rate_hz = SAMPLE_RATE_HZ;
+    acfg.attack_curve = acfg.decay_curve = acfg.release_curve = coef_from_double(0.5);
+    acfg.run_through = 0;
+    switch (kind)
+    {
+    case REVERB_SNARE:
+        rcfg.predelay_ms = hz_from_double(12.0);
+        rcfg.rt60_ms = hz_from_double(1500.0);
+        rcfg.hf_ratio = coef_from_double(0.5);
+        rcfg.hf_hz = hz_from_double(5000.0);
+        rcfg.mix = coef_from_double(0.35);
+        rcfg.mod_depth = coef_from_double(0.5);
+        acfg.attack_ms = 1;
+        acfg.decay_ms = 90;
+        acfg.sustain = PCL_COEF(0.0);
+        acfg.release_ms = 50;
+        break;
+    case REVERB_PAD:
+        rcfg.predelay_ms = hz_from_double(30.0);
+        rcfg.rt60_ms = hz_from_double(5000.0);
+        rcfg.hf_ratio = coef_from_double(0.6);
+        rcfg.hf_hz = hz_from_double(3000.0);
+        rcfg.mix = coef_from_double(0.5);
+        rcfg.mod_depth = PCL_COEF(1.0);
+        acfg.attack_ms = 400;
+        acfg.decay_ms = 300;
+        acfg.sustain = coef_from_double(0.7);
+        acfg.release_ms = 600;
+        break;
+    default: /* REVERB_PLUCK */
+        rcfg.predelay_ms = hz_from_double(20.0);
+        rcfg.rt60_ms = hz_from_double(2500.0);
+        rcfg.hf_ratio = coef_from_double(0.5);
+        rcfg.hf_hz = hz_from_double(4000.0);
+        rcfg.mix = coef_from_double(0.35);
+        rcfg.mod_depth = coef_from_double(0.5);
+        acfg.attack_ms = 2;
+        acfg.decay_ms = 150;
+        acfg.sustain = PCL_COEF(0.0);
+        acfg.release_ms = 80;
+        break;
+    }
+    ocfg.sample_rate_hz = SAMPLE_RATE_HZ;
+    ocfg.waveform = PCL_OSC_SAW;
+    ocfg.frequency = hz_from_double(kind == REVERB_PAD ? 220.0 : pluck_hz[0]);
+    ocfg.pitch_depth_oct = PCL_OCT(0.0);
+    ocfg.pulse_width = PCL_COEF(0.5);
+    ocfg.pwm_depth = PCL_COEF(0.0);
+    ncfg.sample_rate_hz = SAMPLE_RATE_HZ;
+    ncfg.colour = PCL_NOISE_WHITE;
+    ncfg.seed = seed;
+    vcfg.sample_rate_hz = SAMPLE_RATE_HZ;
+    vcfg.gain = PCL_COEF(1.0);
+    if (pcl_reverb_init(&rv, &rcfg, g_reverb_mem, sizeof g_reverb_mem) != PCL_OK
+        || pcl_osc_init(&osc, &ocfg) != PCL_OK || pcl_noise_init(&noise, &ncfg) != PCL_OK
+        || pcl_adsr_init(&aenv, &acfg) != PCL_OK || pcl_vca_init(&vca, &vcfg) != PCL_OK)
+    {
+        fprintf(stderr, "reverb patch configuration rejected\n");
+        return 0;
+    }
+    ocfg.frequency = hz_from_double(277.18); /* the pad's second voice: a major third up */
+    if (pcl_osc_init(&osc2, &ocfg) != PCL_OK)
+        return 0;
+
+    f = open_wav_channels(dir, file, frames, 2u, path);
+    if (f == NULL)
+        return 0;
+    for (done = 0; done < frames;)
+    {
+        const size_t n = (frames - done < BLOCK_FRAMES) ? (frames - done) : BLOCK_FRAMES;
+        const size_t cnt = note_events(times, n_times, done, n, events);
+
+        if (kind == REVERB_SNARE)
+            pcl_noise_process(&noise, audio, n);
+        else if (kind == REVERB_PAD)
+        {
+            pcl_osc_process(&osc, audio, NULL, NULL, NULL, NULL, n);
+            pcl_osc_process(&osc2, audio2, NULL, NULL, NULL, NULL, n);
+            for (i = 0; i < n; i++)
+                audio[i] = sample_from_double(
+                    0.5 * (sample_to_double(audio[i]) + sample_to_double(audio2[i])));
+        }
+        else
+        {
+            /* The next note's pitch, set while the previous pluck has died away. */
+            const size_t step
+                = (size_t)((double)done / ((double)SAMPLE_RATE_HZ * REVERB_PLUCK_STEP_S));
+            pcl_osc_set_frequency(
+                &osc, hz_from_double(pluck_hz[step % (sizeof pluck_hz / sizeof pluck_hz[0])]));
+            pcl_osc_process(&osc, audio, NULL, NULL, NULL, NULL, n);
+        }
+        for (i = 0; i < n; i++)
+            audio[i] = sample_from_double(sample_to_double(audio[i]) * 0.5);
+        pcl_adsr_process(&aenv, amp, NULL, events, cnt, n);
+        pcl_vca_process(&vca, audio, audio, amp, n);
+        pcl_reverb_process(&rv, audio, out_l, out_r, n);
+        for (i = 0; i < n; i++)
+        {
+            const double l = sample_to_double(out_l[i]) * REVERB_OUTPUT_GAIN;
+            const double r = sample_to_double(out_r[i]) * REVERB_OUTPUT_GAIN;
+            peak = fabs(l) > peak ? fabs(l) : peak;
+            peak = fabs(r) > peak ? fabs(r) : peak;
+            pcm[2u * i] = pcm16_from_double(l);
+            pcm[2u * i + 1u] = pcm16_from_double(r);
+        }
+        if (!write_pcm16(f, pcm, 2u * n))
+        {
+            perror(path);
+            fclose(f);
+            return 0;
+        }
+        done += (uint32_t)n;
+    }
+    if (fclose(f) != 0)
+    {
+        perror(path);
+        return 0;
+    }
+    printf("wrote %s (stereo, peak %.2f)\n", path, peak);
+    return 1;
+}
+
+static int render_reverb(const char *dir, double seconds, uint32_t seed)
+{
+    const uint32_t frames = (uint32_t)(seconds * (double)SAMPLE_RATE_HZ);
+
+    return render_reverb_patch(
+               dir, PCL_REVERB_SMALL, REVERB_SNARE, "reverb_small_snare.wav", frames, seed)
+        && render_reverb_patch(
+            dir, PCL_REVERB_QUALITY, REVERB_SNARE, "reverb_quality_snare.wav", frames, seed)
+        && render_reverb_patch(
+            dir, PCL_REVERB_SMALL, REVERB_PAD, "reverb_small_pad.wav", frames, seed)
+        && render_reverb_patch(
+            dir, PCL_REVERB_QUALITY, REVERB_PAD, "reverb_quality_pad.wav", frames, seed)
+        && render_reverb_patch(
+            dir, PCL_REVERB_SMALL, REVERB_PLUCK, "reverb_small_pluck.wav", frames, seed)
+        && render_reverb_patch(
+            dir, PCL_REVERB_QUALITY, REVERB_PLUCK, "reverb_quality_pluck.wav", frames, seed);
+}
+
 /* ---- Sampler patches ---- */
 
 typedef enum
@@ -1890,11 +2101,11 @@ int main(int argc, char **argv)
             && strcmp(argv[1], "adsr") != 0 && strcmp(argv[1], "svf") != 0
             && strcmp(argv[1], "biquad") != 0 && strcmp(argv[1], "events") != 0
             && strcmp(argv[1], "ladder") != 0 && strcmp(argv[1], "delay") != 0
-            && strcmp(argv[1], "sampler") != 0))
+            && strcmp(argv[1], "sampler") != 0 && strcmp(argv[1], "reverb") != 0))
     {
         fprintf(stderr,
-            "usage: %s noise|lfo|adsr|svf|biquad|ladder|delay|sampler|events <outdir> [seconds] "
-            "[seed]\n",
+            "usage: %s noise|lfo|adsr|svf|biquad|ladder|delay|sampler|reverb|events <outdir> "
+            "[seconds] [seed]\n",
             argv[0]);
         return 2;
     }
@@ -1924,6 +2135,8 @@ int main(int argc, char **argv)
         return render_delay(argv[2], seconds, seed) ? 0 : 1;
     if (strcmp(argv[1], "sampler") == 0)
         return render_sampler(argv[2], seconds) ? 0 : 1;
+    if (strcmp(argv[1], "reverb") == 0)
+        return render_reverb(argv[2], seconds, seed) ? 0 : 1;
     if (strcmp(argv[1], "events") == 0)
         return render_events(argv[2], seconds, seed) ? 0 : 1;
     return render_noise(argv[2], seconds, seed) ? 0 : 1;

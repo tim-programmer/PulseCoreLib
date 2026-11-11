@@ -91,6 +91,17 @@
 #define PCL_FORCE_INLINE static inline
 #endif
 
+/* ---- no-inline: keeps a large specialised body out of its caller (code size, stack frames) ----
+ */
+
+#if defined(PCL_COMPILER_MSVC)
+#define PCL_NOINLINE __declspec(noinline)
+#elif defined(__GNUC__)
+#define PCL_NOINLINE __attribute__((noinline))
+#else
+#define PCL_NOINLINE
+#endif
+
 /*
  * Makes a 32-bit integer variable opaque to the optimizer: the compiler no longer knows how it was
  * computed, only that it is a plain 32-bit register. Use it on a saturated value that is about to

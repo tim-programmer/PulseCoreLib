@@ -20,6 +20,7 @@
 #include "pcl/pcl_lfo.h"
 #include "pcl/pcl_noise.h"
 #include "pcl/pcl_osc.h"
+#include "pcl/pcl_reverb.h"
 #include "pcl/pcl_sampler.h"
 #include "pcl/pcl_seq.h"
 #include "pcl/pcl_svf.h"

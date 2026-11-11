@@ -51,7 +51,9 @@ Butterworth from two instances); `render ladder <outdir>` three ladder-filter pa
 24 dB low-pass swept by an ADSR, self-oscillation started from a click at 440 then 880 Hz, and a saw
 through all eight modes in turn); `render delay <outdir>` three delay patches (an echo with feedback and
 tone, a chorus and a flanger); `render sampler <outdir>` three sampler patches from synthesized samples (a
-one-shot melody, a sustain loop with release, a ping-pong pad); `render events <outdir>` three patches that run the clock, the
+one-shot melody, a sustain loop with release, a ping-pong pad); `render reverb <outdir>` six stereo reverb
+patches (noise bursts, a held chord and a plucked melody, each through the small and the quality
+variant; use 5 s or more); `render events <outdir>` three patches that run the clock, the
 arpeggiator and the step sequencer into a voice (an arpeggiator over four chords in four modes, a 16-step
 acid line with ties, rests and swing, and a ping-pong run that turns random):
 
@@ -60,7 +62,7 @@ mkdir -p out && build-float/tools/render noise out && build-float/tools/render l
     && build-float/tools/render adsr out && build-float/tools/render svf out \
     && build-float/tools/render biquad out && build-float/tools/render ladder out \
     && build-float/tools/render delay out && build-float/tools/render sampler out \
-    && build-float/tools/render events out
+    && build-float/tools/render reverb out 7 && build-float/tools/render events out
 ```
 
 `tools/play_sample <in.wav> <out.wav> [root_note]` plays a short melody from any 16-bit PCM WAV file through
@@ -70,7 +72,7 @@ recordings. The WAV reader (`tools/wav_read.c`) is host-only, like every file-I/
 ## Testing on a FRDM-MCXN947
 
 Builds the library for the board's Cortex-M33, flashes it, runs the oscillator, noise,
-sample-and-hold, VCA, LFO, ADSR, math, state-variable filter, biquad, ladder, delay and sampler benchmark cases on the chip, and checks the result against the host build - one
+sample-and-hold, VCA, LFO, ADSR, math, state-variable filter, biquad, ladder, delay, sampler and reverb benchmark cases on the chip, and checks the result against the host build - one
 command, no manual steps.
 
 ```sh
@@ -138,10 +140,11 @@ Link against the `pcl::pcl` target; it carries the include path and the sample-t
 | Step sequencer (up to 64 steps; rests, ties, per-step gate, swing, transpose; forward/backward/ping-pong/random) | `pcl_seq.h` | event | yes | yes | yes | [sequencer.md](docs/modules/sequencer.md) |
 | Sampler (one voice: caller-owned mono sample in flash or RAM, MIDI note pitch, octave pitch modulation, one-shot / forward / ping-pong / sustain-with-release loops, reverse, sample-accurate note events, declick) | `pcl_sampler.h` | audio (pitch modulation at control rate) | yes | yes | yes | [sampler.md](docs/modules/sampler.md) |
 | Delay (echo, chorus, flanger, vibrato: tape-style glide, time modulation, feedback with tone and saturation, dry/wet mix; linear or Hermite interpolation; caller memory, optional 16-bit storage) | `pcl_delay.h` | audio (modulation at control rate) | yes | yes | yes | [delay.md](docs/modules/delay.md) |
+| Reverb (mono in, stereo out; `SMALL` Schroeder-Moorer combs + all-passes or `QUALITY` 8-line Hadamard feedback delay network; RT60 in ms with high-frequency damping, size, predelay, width, mix, line modulation, freeze; caller memory, optional 16-bit lines) | `pcl_reverb.h` | audio (modulation at control rate) | yes | yes | yes | [reverb.md](docs/modules/reverb.md) |
 | Math: pitch and dB conversions, sin/cos, filter pre-warp `tan`, `tanh` | `pcl_math.h` | setters / audio | yes | yes | yes | [math.md](docs/modules/math.md) |
 
 Shared pieces: `pcl_types.h` (sample types, status codes, saturating fixed-point helpers),
-`pcl_platform.h` (compiler/CPU detection, `PCL_INLINE`, `PCL_RESTRICT`, `PCL_ALIGNED`),
+`pcl_platform.h` (compiler/CPU detection, `PCL_INLINE`, `PCL_FORCE_INLINE`, `PCL_NOINLINE`, `PCL_RESTRICT`, `PCL_ALIGNED`),
 `pcl_smooth.h` (linear parameter smoothing), `pcl_event.h` (`pcl_event_t` for event-driven modules). Frequencies and octave amounts use `pcl_hz_t` /
 `pcl_oct_t` (float, or Q16.16 / Q4.28 in fixed-point builds); build constants with `PCL_HZ(x)` and
 `PCL_OCT(x)`. Levels in decibels and signals that may exceed full scale use `pcl_db_t` (Q8.24) and

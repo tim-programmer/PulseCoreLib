@@ -17,7 +17,8 @@ typedef enum
     BENCH_BIQUAD,
     BENCH_LADDER,
     BENCH_DELAY,
-    BENCH_SAMPLER
+    BENCH_SAMPLER,
+    BENCH_REVERB
 } bench_kind_t;
 
 typedef enum
@@ -91,6 +92,9 @@ typedef struct
     /* sampler */
     int sm_hermite; /* Hermite interpolation instead of linear                         */
     int sm_mod;     /* feed a noise buffer to pitch_mod                                */
+    /* reverb */
+    int rv_quality; /* PCL_REVERB_QUALITY instead of SMALL                             */
+    int rv_q15;     /* 16-bit lines instead of native                                  */
 } bench_case_t;
 
 #define STATIC_CASE(name_, wf, hz_)                                                                \
@@ -150,6 +154,9 @@ typedef struct
 
 #define SAMPLER_CASE(name_, hermite_, mod_)                                                        \
     { .name = name_, .kind = BENCH_SAMPLER, .sm_hermite = hermite_, .sm_mod = mod_ }
+
+#define REVERB_CASE(name_, quality_, q15_)                                                         \
+    { .name = name_, .kind = BENCH_REVERB, .rv_quality = quality_, .rv_q15 = q15_ }
 
 #define MATH_CASE(name_, fn_) { .name = name_, .kind = BENCH_MATH, .math_fn = fn_ }
 
@@ -225,6 +232,10 @@ static const bench_case_t g_cases[] = {
     SAMPLER_CASE("sampler_linear", 0, 0),
     SAMPLER_CASE("sampler_hermite", 1, 0),
     SAMPLER_CASE("sampler_hermite_mod", 1, 1),
+    REVERB_CASE("reverb_small_q15", 0, 1),
+    REVERB_CASE("reverb_small_native", 0, 0),
+    REVERB_CASE("reverb_quality_q15", 1, 1),
+    REVERB_CASE("reverb_quality_native", 1, 0),
 };
 
 #define BENCH_SAMPLE_RATE_HZ 48000u
@@ -860,6 +871,60 @@ static pcl_status_t bench_run_sampler(
     return PCL_OK;
 }
 
+/* Reverb cases: 48 kHz, size 1, 10 ms predelay, RT60 2 s damped above 4 kHz (ratio 0.5), width 1,
+   mix 0.3, modulation 0.5 (QUALITY), stereo out (the left channel is checked), noise in. */
+#define BENCH_REVERB_BYTES (92u * 1024u) /* QUALITY with native float / Q31 lines */
+
+static pcl_status_t bench_run_reverb(
+    const bench_case_t *c, pcl_sample_t *out, pcl_bench_clock_fn clock, pcl_bench_result_t *result)
+{
+    static unsigned char mem[BENCH_REVERB_BYTES];
+    pcl_reverb_t         rv;
+    pcl_reverb_config_t  cfg;
+    pcl_sample_t         in[PCL_BENCH_BLOCK];
+    pcl_sample_t         right[PCL_BENCH_BLOCK];
+    uint32_t             seed = 0x2545F491u;
+    size_t               pos;
+    pcl_status_t         st;
+
+    cfg.sample_rate_hz = BENCH_SAMPLE_RATE_HZ;
+    cfg.variant = c->rv_quality ? PCL_REVERB_QUALITY : PCL_REVERB_SMALL;
+    cfg.size = PCL_COEF(1.0);
+    cfg.max_predelay_ms = 10u;
+    cfg.predelay_ms = PCL_MS(10.0);
+    cfg.rt60_ms = PCL_MS(2000.0);
+    cfg.hf_ratio = PCL_COEF(0.5);
+    cfg.hf_hz = PCL_HZ(4000.0);
+    cfg.width = PCL_COEF(1.0);
+    cfg.mix = PCL_COEF(0.3);
+    cfg.mod_depth = PCL_COEF(0.5);
+    cfg.freeze = 0;
+    cfg.storage = c->rv_q15 ? PCL_DELAY_STORE_Q15 : PCL_DELAY_STORE_NATIVE;
+    st = pcl_reverb_init(&rv, &cfg, mem, sizeof mem);
+    if (st != PCL_OK)
+        return st;
+
+    timing_start(result);
+    for (pos = 0; pos < PCL_BENCH_FRAMES; pos += PCL_BENCH_BLOCK)
+    {
+        size_t   i;
+        uint32_t t0 = 0, t1 = 0;
+
+        for (i = 0; i < PCL_BENCH_BLOCK; i++)
+            in[i] = bench_noise(&seed);
+        if (clock != NULL)
+            t0 = clock();
+        pcl_reverb_process(&rv, in, out + pos, right, PCL_BENCH_BLOCK);
+        if (clock != NULL)
+        {
+            t1 = clock();
+            timing_add(result, t1 - t0);
+        }
+    }
+    timing_finish(result, clock);
+    return PCL_OK;
+}
+
 /* Biquad cases: 48 kHz, cutoff 1.2 kHz, Q 2, +6 dB, noise in. */
 #define BENCH_BQ_CUTOFF_HZ 1200.0
 #define BENCH_BQ_Q 2.0
@@ -1155,6 +1220,8 @@ pcl_status_t pcl_bench_run(
         return bench_run_delay(&g_cases[id], out, clock, result);
     case BENCH_SAMPLER:
         return bench_run_sampler(&g_cases[id], out, clock, result);
+    case BENCH_REVERB:
+        return bench_run_reverb(&g_cases[id], out, clock, result);
     default:
         return bench_run_osc(&g_cases[id], out, clock, result);
     }

@@ -9,6 +9,7 @@ add_library(pcl STATIC
     filter/pcl_ladder.c
     filter/pcl_svf.c
     fx/pcl_delay.c
+    fx/pcl_reverb.c
     mod/pcl_adsr.c
     mod/pcl_lfo.c
     mod/pcl_vca.c

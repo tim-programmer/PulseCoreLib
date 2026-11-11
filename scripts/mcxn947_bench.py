@@ -115,12 +115,13 @@ def capture(port, baud, reset_cmd):
                 sys.exit(f"timed out waiting for DONE ({len(data)} bytes received)")
             data += ser.read(4096)
     # The firmware starts printing its banner again right after DONE; drop anything past it.
-    # Likewise anything before the first banner (the line glitches while the chip resets).
-    # Start at a complete "hardware line + banner" pair if there is one (a glitch can corrupt
-    # the first line the chip prints while it comes out of reset).
-    pair = re.search(rb"HPCLHW[^\n]*\nPCLBENCH1", data)
-    first = pair.start() if pair else data.index(b"PCLBENCH1")
-    return data[first:data.index(b"DONE\n") + 5]
+    # Likewise anything before the last banner ahead of the frames: the line glitches while the
+    # chip resets, and a double reset prints the banner twice with a stray byte in between. Start
+    # at the last complete "hardware line + banner" pair if there is one.
+    done = data.index(b"DONE\n")
+    pairs = list(re.finditer(rb"HPCLHW[^\n]*\nPCLBENCH1", data[:done]))
+    first = pairs[-1].start() if pairs else data.rindex(b"PCLBENCH1", 0, done)
+    return data[first:done + 5]
 
 
 def case_names():
