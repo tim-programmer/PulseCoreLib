@@ -254,11 +254,12 @@ more (`render reverb out 7`). Not yet listened to by a person.
 
 ## Open points (for review)
 
-1. **Speed.** If the measured cost is too high, options in rough order of payoff:
-   (a) a 32-bit Q15 path (Q15 x Q15 products, `pcl_mul_q15_q30`-style), which matters most for the M0+
-   (measured: `SMALL` Q15 is 2 763 cycles/sample there, more than a 125 MHz RP2040 has at 48 kHz) and
-   would also speed up the M33 Q15 build; this is a second arithmetic path with its own accuracy
-   tests;
+1. **Speed.** Decided (2026-11-12): **no M0+-specific optimisation.** Reverb is meant for the more
+   capable parts (M33/M4F class); on an M0+ it stays usable only at reduced sample rates, as measured.
+   Options kept on file in case the M33 cost ever needs cutting, in rough order of payoff:
+   (a) a 32-bit Q15 path (Q15 x Q15 products, `pcl_mul_q15_q30`-style): the big win on the M0+
+   (`SMALL` Q15 is 2 763 cycles/sample there) and some on the M33 Q15 build; a second arithmetic path
+   with its own accuracy tests. Not planned;
    (b) float: drop the +-4 clamp on line writes (the delay doesn't clamp either), about 10-20 %;
    (c) the half-rate tank from the draft (question 5), about half the cost and memory;
    (d) fewer `QUALITY` lines (4 lines and Hadamard-4 would roughly halve it, at some loss of density).
