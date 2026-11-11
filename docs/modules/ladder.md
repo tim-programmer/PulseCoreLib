@@ -6,9 +6,9 @@ and the `ladder_*` cases of `platform/bench/pcl_bench.c`.
 
 **Status: implemented in float, Q15 and Q31; all tests pass in all three builds** (Clang with ASan +
 UBSan, GCC `-O2`, and the `cm0plus-*` / `cm33-*` compile checks including the no-soft-float check;
-the `mcxn947-*` firmware builds). Response, tuning, sizes and host timings are **measured**. **Cortex-M33
-cycle counts are not:** the bench cases exist, but the board was not connected. Cortex-M0+ is
-unmeasured, as for every module.
+the `mcxn947-*` firmware builds). Response, tuning, sizes, host timings and **Cortex-M33 cycle counts are
+measured**: on the FRDM-MCXN947 every ladder case is bit-exact against the host build in all three types,
+float included. Cortex-M0+ is unmeasured, as for every module.
 
 ## Summary
 
@@ -169,24 +169,28 @@ about 6e-6 in float and Q31 (`pcl_tanh` is a table, 2.3e-5 from libm), 3.3e-5 in
 The `cm0plus-*` / `cm33-*` presets compile without an optimization flag, so their objects are 2-3 times
 larger (18.7 KB for M0+ Q15). Measure code size with `-O2` as above.
 
-## Cost
+## Cost (cycles per sample): MEASURED on a Cortex-M33
 
-**Host (x86-64, GCC `-O2`, noise in, cutoff 1.2 kHz, resonance 0.6, 256-frame blocks), ns per sample,
-against the SVF in the same conditions:**
+FRDM-MCXN947 (Cortex-M33 + FPU, 150 MHz), DWT cycle counter, `-O2`, from flash with the cache on,
+48 kHz, 256-frame blocks of noise, cutoff 1.2 kHz, resonance 0.6, drive 2 (the SVF's bench conditions).
+Bit-exact against the host build in all three types (float: 2048/2048 samples identical). Spread between
+blocks under 0.3 %.
 
-| Case | float | Q15 | Q31 |
-|------|------:|----:|----:|
-| static | 14.7 (1.9 x SVF) | 14.9 (1.8 x) | 15.0 (1.9 x) |
-| `cutoff_mod` | 16.8 (1.8 x) | 19.2 (1.7 x) | 19.5 (1.8 x) |
-| `saturate` | 22.4 (1.4 x) | 21.3 (2.0 x) | 21.7 (2.0 x) |
-| `saturate` + `cutoff_mod` | 23.8 (1.5 x) | 25.1 (1.8 x) | 25.3 (1.8 x) |
+| Case | Q15 | Q31 | float | SVF in the same run (Q15 / Q31 / float) |
+|------|----:|----:|------:|------:|
+| `ladder_lp24` (static) | 230 | 240 | 118 | 165 / 155 / 65 (static) |
+| `ladder_hp24` | 250 | 259 | 128 | |
+| `ladder_mod` | 342 | 352 | 161 | 240 / 232 / 85 (mod) |
+| `ladder_saturate` | 280 | 290 | 165 | 198 / 190 / 111 |
+| `ladder_mod_saturate` | 393 | 403 | 212 | 273 / 267 / 131 |
 
-So **about 1.7-2 times the SVF**, as the draft expected. Scaled by the SVF's measured M33 cycles (Q31
-155 static / 232 modulated, float 64 / 85), that suggests **roughly 280-420 cycles per sample in Q31 and
-120-160 in float on the M33**. That's about 9-13 % of a 150 MHz M33 per voice at 48 kHz in fixed point,
-4-5 % in float. **This is an estimate, not a measurement:** run `scripts/mcxn947_bench.py` with the board
-attached to get the real figures (cases `ladder_lp24`, `ladder_hp24`, `ladder_mod`, `ladder_saturate`,
-`ladder_mod_saturate`).
+* **1.4-1.9 times the SVF** (the host said 1.7-2). One voice is **7.7 % of the core in Q31 at 48 kHz
+  (3125 cycles available), 11-13 % with modulation**, and 3.8-6.8 % in float.
+* Against the estimate (scaled from host timings): Q31 280-420 estimated, 240-403 measured; float 120-160
+  estimated, 118-212 measured. `saturate` costs more in float than the estimate allowed (+47-51 cycles,
+  about one `pcl_tanh`).
+* The mode mix costs about 20 cycles (`hp24` vs `lp24`), and `cutoff_mod` about 112 (Q31): the tick plus
+  the per-sample `G^4`, Newton step and `a k` while the coefficients move.
 
 ## Rate
 
@@ -237,7 +241,7 @@ The 16-bit files are identical in float, Q15 and Q31.
 
 ## Known limits
 
-* M33 cycles not measured yet (board not connected); M0+ not measured at all.
+* Cortex-M0+ cost not measured (no hardware).
 * The `tanh` is Zavalishin's "cheap" placement (after solving the linear loop), not the implicit
   nonlinear solution, and it is the only nonlinearity. Per-stage saturation (Huovilainen) was rejected
   for cost.

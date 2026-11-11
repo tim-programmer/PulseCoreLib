@@ -7,8 +7,9 @@ reverb and the sampler too), the `delay` subcommand of `tools/render.c`, and the
 
 **Status: implemented in float, Q15 and Q31; all tests pass in all three builds** (Clang with ASan +
 UBSan, GCC `-O2`, the `cm0plus-*` / `cm33-*` compile checks including the no-soft-float check, and the
-`mcxn947-*` firmware). Response, timing, sizes and host speed are **measured**. **M33 cycle counts are
-not:** the board was not connected. M0+ is unmeasured, as for every module.
+`mcxn947-*` firmware). Response, timing, sizes, host speed and **Cortex-M33 cycle counts are measured**:
+on the FRDM-MCXN947 every delay case is bit-exact against the host build in all three types, float
+included. M0+ is unmeasured, as for every module.
 
 ## Summary
 
@@ -137,25 +138,33 @@ validate the same way. `in` and `out` may alias.
   helpers, and the soft-float check passes.
 * **Stack in `process`:** 400 B (M0+ Q15), 416 B (M0+ Q31), 208 B (M33 float), 216 B (M33 Q31).
 
-## Cost
+## Cost (cycles per sample): MEASURED on a Cortex-M33
 
-**Host (x86-64, GCC `-O2`, 20 ms of a 50 ms line, feedback 0.6, noise in, 256-frame blocks), ns per
-sample, against the SVF's static three-output case measured in the same run:**
+FRDM-MCXN947 (Cortex-M33 + FPU, 150 MHz), DWT cycle counter, `-O2`, from flash with the cache on,
+48 kHz, 256-frame blocks of noise, 20 ms of a 50 ms line (native storage), feedback 0.6, mix 0.5;
+modulated cases: +-5 ms of noise on the time; tone cases: 3 kHz tone and `saturate`. Bit-exact against
+the host build in all three types (float: 2048/2048 samples identical).
 
-| Case | float | Q15 | Q31 |
-|------|------:|----:|----:|
-| linear | 3.5 (0.44 x SVF) | 5.9 (0.72 x) | 5.6 (0.72 x) |
-| linear + tone + `saturate` | 8.4 (1.06 x) | 10.6 (1.31 x) | 9.6 (1.24 x) |
-| Hermite + modulation | 5.4 (0.68 x) | 8.8 (1.08 x) | 8.8 (1.15 x) |
-| Hermite + modulation + tone + `saturate` | 11.6 (1.49 x) | 13.7 (1.68 x) | 13.4 (1.77 x) |
+| Case | Q15 | Q31 | float |
+|------|----:|----:|------:|
+| `delay_linear` | 147 | 160 | 83 |
+| `delay_linear_tone` | 196 (180-210) | 213 (196-228) | 122 (101-141) |
+| `delay_hermite_mod` | 223 | 226 | 129 |
+| `delay_hermite_mod_tone` | 272 (256-286) | 278 (262-293) | 168 (147-188) |
 
-Scaled by the SVF's measured M33 cycles (155 Q31, 64 float), that suggests **roughly 110-275 cycles per
-sample in Q31 and 30-95 in float on the M33**, depending on the options. The draft's estimate was 40-150
-in fixed point, so the full-featured fixed-point case is probably above it. **This is an estimate, not a
-measurement:** run `scripts/mcxn947_bench.py` with the board attached (cases `delay_linear`,
-`delay_linear_tone`, `delay_hermite_mod`, `delay_hermite_mod_tone`). The loop has run-time branches on
-the interpolator, storage, tone and `saturate` and hasn't been specialised; if the board numbers call for
-it, the SVF's force-inlined variants are the obvious next step.
+(Ranges: fastest and slowest block, where they differ by more than 1 %.)
+
+* **One delay is 5-9 % of the core in fixed point at 48 kHz and 2.7-5.4 % in float.** A plain linear echo
+  costs about as much as a static SVF in fixed point (147-160 vs 155-165), and more in float (83 vs 65).
+* **The float figures are about twice my estimate** (30-95 cycles, scaled from host timings against the
+  SVF). The fixed-point figures fell inside theirs (110-275 for Q31). The host-to-M33 scaling held for
+  the filters but not for the delay. Likely reasons, not separated: the loop's run-time branches
+  (interpolator, storage, tone, `saturate`) are cheap on the host's predictor but not on the M33; each
+  sample converts the Q20.12 fraction to float; and the two per-sample smoothers live in the loop.
+* **The tone cases vary by about ±7 % between blocks.** Probably data-dependent: `tanh` is skipped below
+  1/64, so its cost depends on how much of the loop signal is small in each block.
+* The obvious optimisation, if wanted, is the SVF's: force-inlined loop variants without the run-time
+  branches (at least static vs modulated, and with vs without the loop extras).
 
 ## Rate
 
@@ -194,7 +203,7 @@ Echo timing and levels agree across float, Q15 and Q31.
 
 ## Known limits
 
-* M33 cycles not measured (board not connected); M0+ not at all.
+* Cortex-M0+ cost not measured (no hardware). The float loop is unspecialised (see "Cost").
 * Changing `interp` or `tone_hz` switches at once and may click.
 * With `saturate` off, float lets the line grow to `1 / (1 - |feedback|)` times the input (100 x at 0.99);
   fixed point saturates it at full scale.
