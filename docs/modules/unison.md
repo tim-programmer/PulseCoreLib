@@ -104,11 +104,11 @@ The stack is mostly the chunk buffer and the two accumulator arrays. For Q31 on 
 `-DPCL_UNISON_CHUNK=16` roughly halves it. `PCL_UNISON_MAX_VOICES` (1..16) is a compile-time maximum
 because the voices live inside the struct. An M0+ build can set it to 2-4 (about 130 B per voice).
 
-**Code size** (`pcl_unison.c`, text, arm-none-eabi-gcc `-O2`, from the preset builds): 5016 B (M0+ Q15),
-5112 B (M0+ Q31), 4898 B (M33 float), 5020 B (M33 Q31). That's more than expected. It hasn't been
-analyzed or optimized for size; the likely causes are the forwarding setters and the 64-bit setter
-arithmetic. The M0+ Q15 object depends only on integer runtime helpers (`__aeabi_idiv`, `ldivmod`,
-`lmul`, `uldivmod`), and the soft-float check passes.
+**Code size** (`pcl_unison.c`, text, arm-none-eabi-gcc 15 `-O2`, compiled directly): 3032 B (M0+ Q15),
+3472 B (M0+ Q31), 2604 B (M33 float), 2780 B (M33 Q31). *Corrected:* the first version of this note
+gave 4.9-5.1 KB "from the preset builds". The `cm0plus-*` / `cm33-*` presets are compile checks
+without an optimization flag, so those were `-O0` sizes. The M0+ Q15 object depends only on integer
+runtime helpers (`__aeabi_idiv`, `ldivmod`, `lmul`, `uldivmod`), and the soft-float check passes.
 
 ## Rate
 

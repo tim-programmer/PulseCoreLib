@@ -47,20 +47,23 @@ white, pink and brown noise (equal loudness) and two sample-and-hold-driven pitc
 `render svf <outdir>` writes four filter patches (an ADSR-swept saw, a noise wah, a self-oscillating
 filter glided from 440 to 880 Hz, and a complete voice: oscillator, filter and VCA with two envelopes);
 `render biquad <outdir>` four EQ patches (a swept peaking EQ, a shelf pair, a swept notch, a 4th-order
-Butterworth from two instances); `render events <outdir>` three patches that run the clock, the
+Butterworth from two instances); `render ladder <outdir>` three ladder-filter patches (a saturated
+24 dB low-pass swept by an ADSR, self-oscillation started from a click at 440 then 880 Hz, and a saw
+through all eight modes in turn); `render events <outdir>` three patches that run the clock, the
 arpeggiator and the step sequencer into a voice (an arpeggiator over four chords in four modes, a 16-step
 acid line with ties, rests and swing, and a ping-pong run that turns random):
 
 ```sh
 mkdir -p out && build-float/tools/render noise out && build-float/tools/render lfo out \
     && build-float/tools/render adsr out && build-float/tools/render svf out \
-    && build-float/tools/render biquad out && build-float/tools/render events out
+    && build-float/tools/render biquad out && build-float/tools/render ladder out \
+    && build-float/tools/render events out
 ```
 
 ## Testing on a FRDM-MCXN947
 
 Builds the library for the board's Cortex-M33, flashes it, runs the oscillator, noise,
-sample-and-hold, VCA, LFO, ADSR, math, state-variable filter and biquad benchmark cases on the chip, and checks the result against the host build - one
+sample-and-hold, VCA, LFO, ADSR, math, state-variable filter, biquad and ladder benchmark cases on the chip, and checks the result against the host build - one
 command, no manual steps.
 
 ```sh
@@ -120,6 +123,7 @@ Link against the `pcl::pcl` target; it carries the include path and the sample-t
 | Noise: white, pink (Voss-McCartney), brown | `pcl_noise.h` | audio | yes | yes | yes | [noise.md](docs/modules/noise.md) |
 | Random sample-and-hold (clock / events / gate trigger, slew) | `pcl_noise.h` | sample-accurate triggers | yes | yes | yes | [noise.md](docs/modules/noise.md) |
 | VCA (gain + modulation) | `pcl_vca.h` | audio | yes | yes | yes | [vca.md](docs/modules/vca.md) |
+| Ladder filter (4-pole zero-delay-feedback Moog-style VCF: LP24/18/12/6, BP12/24, HP12/24 by pole mixing; resonance to self-oscillation, optional tanh drive, bass compensation) | `pcl_ladder.h` | audio (coefficients at control rate) | yes | yes | yes | [ladder.md](docs/modules/ladder.md) |
 | State-variable filter (VCF: LP/BP/HP + notch/peak/all-pass, resonance to self-oscillation, exponential cutoff modulation) | `pcl_svf.h` | audio (coefficients at control rate) | yes | yes | yes | [svf.md](docs/modules/svf.md) |
 | Biquad filter (RBJ cookbook: LP, HP, BP, notch, all-pass, peaking EQ, low/high shelf; error-feedback fixed point) | `pcl_biquad.h` | audio (coefficients at control rate) | yes | yes | yes | [biquad.md](docs/modules/biquad.md) |
 | Clock (tempo, 1..96 pulses per quarter, sample-accurate pulses with no drift, START/STOP) | `pcl_clock.h` | event | yes | yes | yes | [clock.md](docs/modules/clock.md) |

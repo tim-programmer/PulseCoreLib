@@ -6,6 +6,7 @@ add_library(pcl STATIC
     event/pcl_clock.c
     event/pcl_seq.c
     filter/pcl_biquad.c
+    filter/pcl_ladder.c
     filter/pcl_svf.c
     mod/pcl_adsr.c
     mod/pcl_lfo.c

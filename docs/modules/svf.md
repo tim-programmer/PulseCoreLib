@@ -5,6 +5,14 @@ the `svf` subcommand of `tools/render.c`, the `svf_*` cases of `platform/bench/p
 Related additions: `pcl_tan_inc` in `pcl_math.h`; `PCL_OPAQUE_I32` and `PCL_FORCE_INLINE` in
 `pcl_platform.h`.
 
+**Shared with the ladder (2026-11-11):** the cutoff control (octave smoother value, modulation scaling,
+`g` from `pcl_tan_inc`), the Q4.28 helpers (saturation, product, sample conversions) and the Newton
+step moved unchanged from `pcl_svf.c` into the internal header `src/core/pcl_cutoff.h`, which
+`pcl_ladder.c` also uses. Verified bit-identical in all three builds: a 23.5 MB render of 128
+configurations (every resonance, cutoff, `saturate`, modulation and setter path) and all bench cases
+match byte for byte before and after, and `test_svf` / `test_svf_internal` pass with the same check
+counts. `test_svf_internal.c` now calls the helpers by their new names.
+
 **Status: implemented in float, Q15 and Q31; all tests pass in all three builds** (Clang with ASan +
 UBSan, GCC `-O2`, and the `cm0plus-*` / `cm33-*` compile checks including the no-soft-float check).
 Accuracy, size and the **Cortex-M33 cycle counts are measured** (FRDM-MCXN947, bit-exact against the

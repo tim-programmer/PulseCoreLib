@@ -14,7 +14,8 @@ typedef enum
     BENCH_ADSR,
     BENCH_MATH,
     BENCH_SVF,
-    BENCH_BIQUAD
+    BENCH_BIQUAD,
+    BENCH_LADDER
 } bench_kind_t;
 
 typedef enum
@@ -77,6 +78,10 @@ typedef struct
     int bq_type;  /* pcl_biquad_type_t                                              */
     int bq_mod;   /* feed a noise buffer to the cutoff modulation input             */
     int bq_sweep; /* move the cutoff every block, so the coefficients ramp          */
+    /* ladder */
+    int ld_mode; /* pcl_ladder_mode_t                                              */
+    int ld_mod;  /* feed a noise buffer to the cutoff modulation input             */
+    int ld_sat;  /* tanh in the feedback loop                                      */
 } bench_case_t;
 
 #define STATIC_CASE(name_, wf, hz_)                                                                \
@@ -127,6 +132,9 @@ typedef struct
 
 #define BIQUAD_CASE(name_, type_, mod_, sweep_)                                                    \
     { .name = name_, .kind = BENCH_BIQUAD, .bq_type = type_, .bq_mod = mod_, .bq_sweep = sweep_ }
+
+#define LADDER_CASE(name_, mode_, mod_, sat_)                                                      \
+    { .name = name_, .kind = BENCH_LADDER, .ld_mode = mode_, .ld_mod = mod_, .ld_sat = sat_ }
 
 #define MATH_CASE(name_, fn_) { .name = name_, .kind = BENCH_MATH, .math_fn = fn_ }
 
@@ -190,6 +198,11 @@ static const bench_case_t g_cases[] = {
     BIQUAD_CASE("biquad_peak", PCL_BIQUAD_PEAK, 0, 0),
     BIQUAD_CASE("biquad_mod", PCL_BIQUAD_LP, 1, 0),
     BIQUAD_CASE("biquad_sweep", PCL_BIQUAD_PEAK, 0, 1),
+    LADDER_CASE("ladder_lp24", PCL_LADDER_LP24, 0, 0),
+    LADDER_CASE("ladder_hp24", PCL_LADDER_HP24, 0, 0),
+    LADDER_CASE("ladder_mod", PCL_LADDER_LP24, 1, 0),
+    LADDER_CASE("ladder_saturate", PCL_LADDER_LP24, 0, 1),
+    LADDER_CASE("ladder_mod_saturate", PCL_LADDER_LP24, 1, 1),
 };
 
 #define BENCH_SAMPLE_RATE_HZ 48000u
@@ -657,6 +670,56 @@ static pcl_status_t bench_run_svf(
     return PCL_OK;
 }
 
+/* Ladder cases: as the SVF's: 48 kHz, cutoff 1.2 kHz, resonance 0.6, noise in. Drive 2. */
+#define BENCH_LADDER_DRIVE 2.0
+
+static pcl_status_t bench_run_ladder(
+    const bench_case_t *c, pcl_sample_t *out, pcl_bench_clock_fn clock, pcl_bench_result_t *result)
+{
+    pcl_ladder_t        ld;
+    pcl_ladder_config_t cfg;
+    pcl_sample_t        in[PCL_BENCH_BLOCK];
+    pcl_sample_t        mod[PCL_BENCH_BLOCK];
+    uint32_t            seed = 0x2545F491u;
+    size_t              pos;
+    pcl_status_t        st;
+
+    cfg.sample_rate_hz = BENCH_SAMPLE_RATE_HZ;
+    cfg.cutoff_hz = PCL_HZ(BENCH_SVF_CUTOFF_HZ);
+    cfg.resonance = PCL_COEF(BENCH_SVF_RESONANCE);
+    cfg.mod_depth_oct = PCL_OCT(BENCH_SVF_DEPTH_OCT);
+    cfg.mode = (pcl_ladder_mode_t)c->ld_mode;
+    cfg.saturate = c->ld_sat;
+    cfg.drive = PCL_WIDE(BENCH_LADDER_DRIVE);
+    cfg.bass_comp = 0;
+    st = pcl_ladder_init(&ld, &cfg);
+    if (st != PCL_OK)
+        return st;
+
+    timing_start(result);
+    for (pos = 0; pos < PCL_BENCH_FRAMES; pos += PCL_BENCH_BLOCK)
+    {
+        size_t   i;
+        uint32_t t0 = 0, t1 = 0;
+
+        for (i = 0; i < PCL_BENCH_BLOCK; i++)
+        {
+            in[i] = bench_noise(&seed);
+            mod[i] = bench_noise(&seed);
+        }
+        if (clock != NULL)
+            t0 = clock();
+        pcl_ladder_process(&ld, in, out + pos, c->ld_mod ? mod : NULL, PCL_BENCH_BLOCK);
+        if (clock != NULL)
+        {
+            t1 = clock();
+            timing_add(result, t1 - t0);
+        }
+    }
+    timing_finish(result, clock);
+    return PCL_OK;
+}
+
 /* Biquad cases: 48 kHz, cutoff 1.2 kHz, Q 2, +6 dB, noise in. */
 #define BENCH_BQ_CUTOFF_HZ 1200.0
 #define BENCH_BQ_Q 2.0
@@ -946,6 +1009,8 @@ pcl_status_t pcl_bench_run(
         return bench_run_svf(&g_cases[id], out, clock, result);
     case BENCH_BIQUAD:
         return bench_run_biquad(&g_cases[id], out, clock, result);
+    case BENCH_LADDER:
+        return bench_run_ladder(&g_cases[id], out, clock, result);
     default:
         return bench_run_osc(&g_cases[id], out, clock, result);
     }

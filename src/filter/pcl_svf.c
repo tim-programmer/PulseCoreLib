@@ -8,17 +8,9 @@
  */
 #include "pcl/pcl_svf.h"
 
-#include "core/pcl_octave.h"
-#include "pcl/pcl_math.h"
+#include "core/pcl_cutoff.h"
 
-#define SVF_REF_HZ 1000 /* the cutoff smoother holds octaves above this */
-
-#define SVF_OCT_RANGE 8 /* the smoother holds octaves / 8, so +-8 octaves fit pcl_coef_t */
-
-/* f / fs above which a cutoff is refused (and the filter clamps): 0.45 * 2^16, truncated. */
-#define SVF_MAX_RATIO_Q16 29491u
-
-#define SVF_MAX_RATIO_F 0.45f
+PCL_STATIC_ASSERT(PCL_SVF_CUTOFF_MIN_HZ == PCL_CUTOFF_MIN_HZ, svf_cutoff_min);
 
 #define SVF_SQRT2 1.41421356237309505
 
@@ -49,26 +41,13 @@ static float svf_damping_from_resonance(pcl_coef_t r)
     return (float)SVF_SQRT2 * q * q;
 }
 
-static pcl_coef_t svf_u_from_hz(pcl_hz_t f)
-{
-    return pcl_hz_to_oct(f, (float)SVF_REF_HZ) * (1.0f / (float)SVF_OCT_RANGE);
-}
-
-static int svf_cutoff_valid(const pcl_svf_t *svf, pcl_hz_t f)
-{
-    return f >= (float)PCL_SVF_CUTOFF_MIN_HZ && f <= SVF_MAX_RATIO_F * (float)svf->sample_rate_hz;
-}
-
 static int svf_resonance_valid(pcl_coef_t r) { return r >= 0.0f && r <= 1.0f; }
-
-static int svf_depth_valid(pcl_oct_t d) { return d >= 0.0f && d < 8.0f; }
 
 /* Coefficients at the current smoothed cutoff and damping plus `mod_oct` octaves. */
 static void svf_target(
     const pcl_svf_t *svf, pcl_oct_t mod_oct, pcl_wide_t *g, pcl_wide_t *c, pcl_coef_t *a1)
 {
-    const float oct = svf->cutoff.current * (float)SVF_OCT_RANGE + mod_oct;
-    const float gg = pcl_tan_hz(pcl_hz_scale((float)SVF_REF_HZ, oct), svf->sample_rate_hz);
+    const float gg = pcl_cutoff_g(svf->cutoff.current, mod_oct, svf->inc_1k, svf->sample_rate_hz);
     const float cc = gg + svf->damping.current;
 
     *g = gg;
@@ -76,53 +55,15 @@ static void svf_target(
     *a1 = 1.0f / (1.0f + gg * cc);
 }
 
-static pcl_oct_t svf_mod_octaves(const pcl_svf_t *svf, pcl_sample_t mod)
-{
-    return mod * svf->mod_depth;
-}
-
 #else /* fixed point */
-
-#define SVF_ROUND28 ((int64_t)1 << (PCL_Q28_SHIFT - 1))
-#define SVF_ROUND30 ((int64_t)1 << (PCL_Q30_SHIFT - 1))
-
-/*
- * Saturates to the Q4.28 range, which is the +-8 limit. Written as "convert, then check the
- * conversion was lossless" and made opaque, so the products it feeds are single 32x32 -> 64
- * multiplies.
- */
-static int32_t svf_sat(int64_t v)
-{
-    int32_t r = (int32_t)v;
-
-    if (v != (int64_t)r)
-        r = v > 0 ? INT32_MAX : INT32_MIN;
-    PCL_OPAQUE_I32(r);
-    return r;
-}
-
-/* Rounded Q4.28 product, as a 64-bit value that has not been saturated. */
-static int64_t svf_mul28(int32_t a, int32_t b)
-{
-    return ((int64_t)a * b + SVF_ROUND28) >> PCL_Q28_SHIFT;
-}
 
 static pcl_coef_t svf_damping_from_resonance(pcl_coef_t r)
 {
     static const int32_t sqrt2_q30 = PCL_CONST_Q30(SVF_SQRT2);
     const int64_t        q = ((int64_t)1 << PCL_Q30_SHIFT) - r; /* 1 - r, 0 .. 1 */
-    const int64_t        q2 = (q * q + SVF_ROUND30) >> PCL_Q30_SHIFT;
+    const int64_t        q2 = (q * q + PCL_CUTOFF_ROUND30) >> PCL_Q30_SHIFT;
 
-    return (pcl_coef_t)((q2 * sqrt2_q30 + SVF_ROUND30) >> PCL_Q30_SHIFT);
-}
-
-/* Octaves above 1 kHz, divided by 8, as Q2.30: Q4.28 >> 1. */
-static pcl_coef_t svf_u_from_hz(pcl_hz_t f) { return pcl_hz_to_oct(f, PCL_HZ(SVF_REF_HZ)) >> 1; }
-
-static int svf_cutoff_valid(const pcl_svf_t *svf, pcl_hz_t f)
-{
-    return f >= PCL_HZ(PCL_SVF_CUTOFF_MIN_HZ)
-        && (uint64_t)f <= (uint64_t)svf->sample_rate_hz * SVF_MAX_RATIO_Q16;
+    return (pcl_coef_t)((q2 * sqrt2_q30 + PCL_CUTOFF_ROUND30) >> PCL_Q30_SHIFT);
 }
 
 static int svf_resonance_valid(pcl_coef_t r)
@@ -130,32 +71,18 @@ static int svf_resonance_valid(pcl_coef_t r)
     return r >= 0 && r <= ((pcl_coef_t)1 << PCL_Q30_SHIFT);
 }
 
-static int svf_depth_valid(pcl_oct_t d) { return d >= 0; }
-
-#define SVF_MAX_INC (SVF_MAX_RATIO_Q16 << 16) /* the limit as a phase increment */
-
 static void svf_target(
     const pcl_svf_t *svf, pcl_oct_t mod_oct, pcl_wide_t *g, pcl_wide_t *c, pcl_coef_t *a1)
 {
-    const int64_t    oct = ((int64_t)svf->cutoff.current * 2) + mod_oct; /* Q4.28 */
-    const uint32_t   inc = pcl_octave_scale_inc(svf->inc_1k, (int32_t)svf_sat(oct), SVF_MAX_INC);
-    const pcl_wide_t gg = pcl_tan_inc(inc);
+    const pcl_wide_t gg
+        = pcl_cutoff_g(svf->cutoff.current, mod_oct, svf->inc_1k, svf->sample_rate_hz);
     const pcl_wide_t cc = gg + (svf->damping.current >> (PCL_Q30_SHIFT - PCL_Q28_SHIFT));
     /* 1 + g*c reaches about 50, outside Q4.28, so keep it in 64 bits: a1 = 2^58 / d. */
-    const uint64_t d = ((uint64_t)1 << PCL_Q28_SHIFT) + (uint64_t)svf_mul28(gg, cc);
+    const uint64_t d = ((uint64_t)1 << PCL_Q28_SHIFT) + (uint64_t)pcl_wide_mul(gg, cc);
 
     *g = gg;
     *c = cc;
     *a1 = (pcl_coef_t)(((uint64_t)1 << (PCL_Q28_SHIFT + PCL_Q30_SHIFT)) / d);
-}
-
-static pcl_oct_t svf_mod_octaves(const pcl_svf_t *svf, pcl_sample_t mod)
-{
-#if PCL_SAMPLE_TYPE == PCL_Q15
-    return pcl_mul_coef_q15(svf->mod_depth, mod);
-#else
-    return pcl_mul_coef_q31(svf->mod_depth, mod);
-#endif
 }
 
 #endif
@@ -167,7 +94,7 @@ static pcl_coef_t svf_ac(pcl_coef_t a1, pcl_wide_t c)
 #if PCL_SAMPLE_TYPE == PCL_FLOAT
     return a1 * c;
 #else
-    return (pcl_coef_t)(((int64_t)a1 * c + SVF_ROUND28) >> PCL_Q28_SHIFT);
+    return (pcl_coef_t)(((int64_t)a1 * c + PCL_CUTOFF_ROUND28) >> PCL_Q28_SHIFT);
 #endif
 }
 
@@ -199,24 +126,20 @@ pcl_status_t pcl_svf_init(pcl_svf_t *svf, const pcl_svf_config_t *cfg)
     if (svf == NULL || cfg == NULL)
         return PCL_ERR_NULL_POINTER;
     if (cfg->sample_rate_hz < PCL_SAMPLE_RATE_MIN_HZ || cfg->sample_rate_hz > PCL_SAMPLE_RATE_MAX_HZ
-        || !svf_resonance_valid(cfg->resonance) || !svf_depth_valid(cfg->mod_depth_oct))
+        || !svf_resonance_valid(cfg->resonance) || !pcl_cutoff_depth_valid(cfg->mod_depth_oct))
         return PCL_ERR_OUT_OF_RANGE;
     tmp.sample_rate_hz = cfg->sample_rate_hz;
-    if (!svf_cutoff_valid(&tmp, cfg->cutoff_hz))
+    if (!pcl_cutoff_valid(cfg->cutoff_hz, cfg->sample_rate_hz))
         return PCL_ERR_OUT_OF_RANGE;
 
     ramp = pcl_smooth_ramp_samples(cfg->sample_rate_hz);
-    pcl_smooth_init(&tmp.cutoff, svf_u_from_hz(cfg->cutoff_hz), ramp);
+    pcl_smooth_init(&tmp.cutoff, pcl_cutoff_u_from_hz(cfg->cutoff_hz), ramp);
     pcl_smooth_init(&tmp.damping, svf_damping_from_resonance(cfg->resonance), ramp);
     tmp.s1 = 0;
     tmp.s2 = 0;
     tmp.mod_depth = cfg->mod_depth_oct;
     tmp.saturate = cfg->saturate != 0;
-#if PCL_SAMPLE_TYPE != PCL_FLOAT
-    tmp.inc_1k = (uint32_t)(((uint64_t)SVF_REF_HZ << 32) / cfg->sample_rate_hz);
-#else
-    tmp.inc_1k = 0u;
-#endif
+    tmp.inc_1k = pcl_cutoff_inc_ref(cfg->sample_rate_hz);
     svf_settle(&tmp);
     *svf = tmp;
     return PCL_OK;
@@ -235,9 +158,9 @@ pcl_status_t pcl_svf_set_cutoff(pcl_svf_t *svf, pcl_hz_t cutoff_hz)
 {
     if (svf == NULL)
         return PCL_ERR_NULL_POINTER;
-    if (!svf_cutoff_valid(svf, cutoff_hz))
+    if (!pcl_cutoff_valid(cutoff_hz, svf->sample_rate_hz))
         return PCL_ERR_OUT_OF_RANGE;
-    pcl_smooth_set_target(&svf->cutoff, svf_u_from_hz(cutoff_hz));
+    pcl_smooth_set_target(&svf->cutoff, pcl_cutoff_u_from_hz(cutoff_hz));
     return PCL_OK;
 }
 
@@ -255,7 +178,7 @@ pcl_status_t pcl_svf_set_mod_depth(pcl_svf_t *svf, pcl_oct_t octaves)
 {
     if (svf == NULL)
         return PCL_ERR_NULL_POINTER;
-    if (!svf_depth_valid(octaves))
+    if (!pcl_cutoff_depth_valid(octaves))
         return PCL_ERR_OUT_OF_RANGE;
     svf->mod_depth = octaves;
     return PCL_OK;
@@ -288,26 +211,6 @@ static void svf_d_steps(pcl_svf_t *svf)
 #endif
 }
 
-/* One Newton step toward 1/d: a1 * (2 - d*a1). Converges quadratically from a close start. */
-static pcl_coef_t svf_newton(pcl_coef_t a1, pcl_svf_d_t d)
-{
-#if PCL_SAMPLE_TYPE == PCL_FLOAT
-    /* Newton from below never exceeds 1/d <= 1, so only the floor needs guarding. */
-    const float a = a1 * (2.0f - d * a1);
-    return a < 0.0f ? 0.0f : a;
-#else
-    const int64_t one = (int64_t)1 << PCL_Q30_SHIFT;
-    /* d (Q8.24) * a1 (Q2.30) = Q10.54; >> 24 gives d*a1 as Q2.30, about 1. */
-    const int64_t t = ((int64_t)d * a1 + ((int64_t)1 << 23)) >> 24;
-    /* 2 - t is about 1; kept in 0 .. 2^31 - 1 so the product is a single 32x32 -> 64 multiply */
-    const int64_t u = 2 * one - t;
-    const int32_t u32 = (int32_t)(u < 0 ? 0 : (u > INT32_MAX ? INT32_MAX : u));
-    const int64_t a = ((int64_t)a1 * u32 + SVF_ROUND30) >> PCL_Q30_SHIFT;
-
-    return (pcl_coef_t)(a < 0 ? 0 : (a > one ? one : a));
-#endif
-}
-
 /* ---- Control tick ---- */
 
 /*
@@ -337,8 +240,8 @@ static void svf_tick(pcl_svf_t *svf, int have_mod, pcl_sample_t mod)
             (void)pcl_smooth_next(&svf->damping);
         }
     }
-    svf_target(
-        svf, have_mod ? svf_mod_octaves(svf, mod) : 0, &svf->g_end, &svf->c_end, &svf->a1_end);
+    svf_target(svf, have_mod ? pcl_cutoff_mod_octaves(svf->mod_depth, mod) : 0, &svf->g_end,
+        &svf->c_end, &svf->a1_end);
     svf->ac_end = svf_ac(svf->a1_end, svf->c_end);
     svf->dg = (pcl_wide_t)((svf->g_end - svf->g) / (pcl_wide_t)PCL_CONTROL_DIV);
     svf->dc = (pcl_wide_t)((svf->c_end - svf->c) / (pcl_wide_t)PCL_CONTROL_DIV);
@@ -357,35 +260,6 @@ typedef struct
     pcl_sample_t  *md; /* the single-mode output, or NULL */
     pcl_svf_mode_t mode;
 } svf_outputs_t;
-
-#if PCL_SAMPLE_TYPE != PCL_FLOAT
-
-/* A Q4.28 value (any int64) as a sample, saturating at full scale. */
-static pcl_sample_t svf_out(int64_t v)
-{
-    const int64_t one = (int64_t)1 << PCL_Q28_SHIFT;
-    const int32_t w = (int32_t)(v >= one ? one - 1 : (v <= -one ? -one : v));
-
-#if PCL_SAMPLE_TYPE == PCL_Q15
-    return pcl_sat_q15(
-        (w + (1 << (PCL_Q28_SHIFT - PCL_Q15_SHIFT - 1))) >> (PCL_Q28_SHIFT - PCL_Q15_SHIFT));
-#else
-    return (pcl_sample_t)((uint32_t)w << (PCL_Q31_SHIFT - PCL_Q28_SHIFT));
-#endif
-}
-
-/* A sample as Q4.28. */
-static pcl_wide_t svf_in(pcl_sample_t x)
-{
-#if PCL_SAMPLE_TYPE == PCL_Q15
-    return (pcl_wide_t)x * (1 << (PCL_Q28_SHIFT - PCL_Q15_SHIFT));
-#else
-    return (pcl_wide_t)(((int64_t)x + (1 << (PCL_Q31_SHIFT - PCL_Q28_SHIFT - 1)))
-        >> (PCL_Q31_SHIFT - PCL_Q28_SHIFT));
-#endif
-}
-
-#endif
 
 /*
  * Filters `n` samples within one control period. The state lives in locals for the loop: the output
@@ -421,7 +295,7 @@ PCL_FORCE_INLINE void svf_chunk_impl(
         {
             d += d_step;
             d_step += d_step2;
-            a1 = svf_newton(a1, d);
+            a1 = pcl_cutoff_newton(a1, d);
             ac = svf_ac(a1, c);
         }
 
@@ -482,28 +356,28 @@ PCL_FORCE_INLINE void svf_chunk_impl(
         {
             /* hp = a1*(x - s2) - (a1*c)*s1 in one accumulator: both products are 32x32 -> 64
                multiplies, with no need to hold the large t = x - c*s1 - s2 (c reaches 7.7). */
-            const pcl_wide_t xs = svf_sat((int64_t)svf_in(in[i]) - s2);
-            const pcl_wide_t hp
-                = svf_sat(((int64_t)a1 * xs - (int64_t)ac * s1 + SVF_ROUND30) >> PCL_Q30_SHIFT);
-            const int64_t    gh = ((int64_t)g * hp + SVF_ROUND28) >> PCL_Q28_SHIFT;
-            const pcl_wide_t bp = svf_sat(gh + s1);
-            const int64_t    gb = svf_mul28(g, bp);
+            const pcl_wide_t xs = pcl_wide_sat((int64_t)pcl_sample_to_wide_rounded(in[i]) - s2);
+            const pcl_wide_t hp = pcl_wide_sat(
+                ((int64_t)a1 * xs - (int64_t)ac * s1 + PCL_CUTOFF_ROUND30) >> PCL_Q30_SHIFT);
+            const int64_t    gh = ((int64_t)g * hp + PCL_CUTOFF_ROUND28) >> PCL_Q28_SHIFT;
+            const pcl_wide_t bp = pcl_wide_sat(gh + s1);
+            const int64_t    gb = pcl_wide_mul(g, bp);
             const int64_t    lp = gb + s2;
 
-            s1 = svf_sat((int64_t)bp + gh);
-            s2 = svf_sat(lp + gb);
+            s1 = pcl_wide_sat((int64_t)bp + gh);
+            s2 = pcl_wide_sat(lp + gb);
             if (saturate)
                 s1 = pcl_sample_to_wide(pcl_tanh(s1));
             if (o->lp != NULL)
-                o->lp[i] = svf_out(lp);
+                o->lp[i] = pcl_wide64_to_sample(lp);
             if (o->bp != NULL)
-                o->bp[i] = svf_out(bp);
+                o->bp[i] = pcl_wide64_to_sample(bp);
             if (o->hp != NULL)
-                o->hp[i] = svf_out(hp);
+                o->hp[i] = pcl_wide64_to_sample(hp);
             if (o->md != NULL)
             {
                 /* k = c - g, exactly; the derived responses are sums of the three outputs. */
-                const int64_t kbp = svf_mul28(c - g, bp);
+                const int64_t kbp = pcl_wide_mul(c - g, bp);
                 int64_t       m;
 
                 switch (o->mode)
@@ -530,7 +404,7 @@ PCL_FORCE_INLINE void svf_chunk_impl(
                     m = lp + hp - kbp;
                     break;
                 }
-                o->md[i] = svf_out(m);
+                o->md[i] = pcl_wide64_to_sample(m);
             }
         }
 #endif

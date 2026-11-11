@@ -15,6 +15,7 @@
 #include "pcl/pcl_biquad.h"
 #include "pcl/pcl_clock.h"
 #include "pcl/pcl_event.h"
+#include "pcl/pcl_ladder.h"
 #include "pcl/pcl_lfo.h"
 #include "pcl/pcl_noise.h"
 #include "pcl/pcl_osc.h"

@@ -22,18 +22,18 @@ static const double pi = 3.14159265358979323846;
 
 static void test_saturation(void)
 {
-    PCL_CHECK_EQ_INT(svf_sat(0), 0);
-    PCL_CHECK_EQ_INT(svf_sat(123456), 123456);
-    PCL_CHECK_EQ_INT(svf_sat(-123456), -123456);
-    PCL_CHECK_EQ_INT(svf_sat(INT32_MAX), INT32_MAX);
-    PCL_CHECK_EQ_INT(svf_sat(INT32_MIN), INT32_MIN);
-    PCL_CHECK_EQ_INT(svf_sat((int64_t)INT32_MAX + 1), INT32_MAX);
-    PCL_CHECK_EQ_INT(svf_sat((int64_t)INT32_MIN - 1), INT32_MIN);
-    PCL_CHECK_EQ_INT(svf_sat((int64_t)1 << 40), INT32_MAX);
-    PCL_CHECK_EQ_INT(svf_sat(-((int64_t)1 << 40)), INT32_MIN);
+    PCL_CHECK_EQ_INT(pcl_wide_sat(0), 0);
+    PCL_CHECK_EQ_INT(pcl_wide_sat(123456), 123456);
+    PCL_CHECK_EQ_INT(pcl_wide_sat(-123456), -123456);
+    PCL_CHECK_EQ_INT(pcl_wide_sat(INT32_MAX), INT32_MAX);
+    PCL_CHECK_EQ_INT(pcl_wide_sat(INT32_MIN), INT32_MIN);
+    PCL_CHECK_EQ_INT(pcl_wide_sat((int64_t)INT32_MAX + 1), INT32_MAX);
+    PCL_CHECK_EQ_INT(pcl_wide_sat((int64_t)INT32_MIN - 1), INT32_MIN);
+    PCL_CHECK_EQ_INT(pcl_wide_sat((int64_t)1 << 40), INT32_MAX);
+    PCL_CHECK_EQ_INT(pcl_wide_sat(-((int64_t)1 << 40)), INT32_MIN);
     /* the case a wrapping add would get wrong: two positives that sum past +8 */
-    PCL_CHECK_EQ_INT(svf_sat((int64_t)(6 << 28) + (5 << 28)), INT32_MAX);
-    PCL_CHECK_EQ_INT(svf_sat((int64_t)(-6 * (1 << 28)) - (5 * (1 << 28))), INT32_MIN);
+    PCL_CHECK_EQ_INT(pcl_wide_sat((int64_t)(6 << 28) + (5 << 28)), INT32_MAX);
+    PCL_CHECK_EQ_INT(pcl_wide_sat((int64_t)(-6 * (1 << 28)) - (5 * (1 << 28))), INT32_MIN);
 }
 
 static void test_conversions(void)
@@ -41,14 +41,14 @@ static void test_conversions(void)
     const int64_t one = (int64_t)1 << PCL_Q28_SHIFT;
 
     /* Q4.28 -> sample: full scale at 1.0, saturating beyond */
-    PCL_CHECK_EQ_INT(svf_out(0), 0);
-    PCL_CHECK_NEAR(pcl_test_to_double(svf_out(one / 2)), 0.5, PCL_TEST_SAMPLE_TOL);
-    PCL_CHECK_NEAR(pcl_test_to_double(svf_out(-one / 2)), -0.5, PCL_TEST_SAMPLE_TOL);
-    PCL_CHECK(svf_out(one) > 0 && svf_out(one * 3) == svf_out(one - 1));
-    PCL_CHECK(svf_out(-one * 3) < 0 && svf_out(-one * 3) == svf_out(-one));
-    PCL_CHECK(svf_out((int64_t)1 << 50) == svf_out(one - 1));
-    PCL_CHECK(svf_out(-((int64_t)1 << 50)) == svf_out(-one));
-    PCL_CHECK(svf_out(one - 1) == (PCL_SAMPLE_TYPE == PCL_Q15 ? INT16_MAX : (INT32_MAX - 7)));
+    PCL_CHECK_EQ_INT(pcl_wide64_to_sample(0), 0);
+    PCL_CHECK_NEAR(pcl_test_to_double(pcl_wide64_to_sample(one / 2)), 0.5, PCL_TEST_SAMPLE_TOL);
+    PCL_CHECK_NEAR(pcl_test_to_double(pcl_wide64_to_sample(-one / 2)), -0.5, PCL_TEST_SAMPLE_TOL);
+    PCL_CHECK(pcl_wide64_to_sample(one) > 0 && pcl_wide64_to_sample(one * 3) == pcl_wide64_to_sample(one - 1));
+    PCL_CHECK(pcl_wide64_to_sample(-one * 3) < 0 && pcl_wide64_to_sample(-one * 3) == pcl_wide64_to_sample(-one));
+    PCL_CHECK(pcl_wide64_to_sample((int64_t)1 << 50) == pcl_wide64_to_sample(one - 1));
+    PCL_CHECK(pcl_wide64_to_sample(-((int64_t)1 << 50)) == pcl_wide64_to_sample(-one));
+    PCL_CHECK(pcl_wide64_to_sample(one - 1) == (PCL_SAMPLE_TYPE == PCL_Q15 ? INT16_MAX : (INT32_MAX - 7)));
     /* sample -> Q4.28 -> sample is the identity for Q15 and loses only the bottom 3 bits for Q31 */
     {
         const pcl_sample_t probes[]
@@ -56,11 +56,11 @@ static void test_conversions(void)
         size_t i;
         for (i = 0; i < sizeof probes / sizeof probes[0]; i++)
         {
-            const pcl_sample_t back = svf_out(svf_in(probes[i]));
+            const pcl_sample_t back = pcl_wide64_to_sample(pcl_sample_to_wide_rounded(probes[i]));
             PCL_CHECK(abs((int)back - (int)probes[i]) <= 1);
         }
     }
-    PCL_CHECK_EQ_INT(svf_in((pcl_sample_t)0), 0);
+    PCL_CHECK_EQ_INT(pcl_sample_to_wide_rounded((pcl_sample_t)0), 0);
 }
 
 static void test_newton_and_products(void)
@@ -71,25 +71,25 @@ static void test_newton_and_products(void)
     int           i;
 
     /* 1/d: d = 1 -> 1.0; d = 2 -> 0.5; it is a fixed point of the step */
-    PCL_CHECK_NEAR(pcl_test_coef_to_double(svf_newton(one30, one24)), 1.0, 2e-9);
-    PCL_CHECK_NEAR(pcl_test_coef_to_double(svf_newton(one30 / 2, 2 * one24)), 0.5, 2e-9);
+    PCL_CHECK_NEAR(pcl_test_coef_to_double(pcl_cutoff_newton(one30, one24)), 1.0, 2e-9);
+    PCL_CHECK_NEAR(pcl_test_coef_to_double(pcl_cutoff_newton(one30 / 2, 2 * one24)), 0.5, 2e-9);
     /* and it converges quadratically from a neighbouring value */
     a = (pcl_coef_t)((int64_t)one30 * 4 / 10); /* 0.4, true 1/d = 0.5 */
     for (i = 0; i < 6; i++)
-        a = svf_newton(a, 2 * one24);
+        a = pcl_cutoff_newton(a, 2 * one24);
     PCL_CHECK_NEAR(pcl_test_coef_to_double(a), 0.5, 4e-9);
     /* from a far-off start it stays in [0, 1] instead of going negative */
-    PCL_CHECK(svf_newton(one30, 40 * one24) >= 0);
-    PCL_CHECK(svf_newton(one30, 40 * one24) <= one30);
-    PCL_CHECK(svf_newton(one30 / 2, 100 * one24) >= 0);
+    PCL_CHECK(pcl_cutoff_newton(one30, 40 * one24) >= 0);
+    PCL_CHECK(pcl_cutoff_newton(one30, 40 * one24) <= one30);
+    PCL_CHECK(pcl_cutoff_newton(one30 / 2, 100 * one24) >= 0);
     /* a1 * c */
     PCL_CHECK_NEAR(pcl_test_coef_to_double(svf_ac(one30 / 2, 2 * (1 << 28))), 1.0, 2e-9);
     PCL_CHECK_NEAR(pcl_test_coef_to_double(svf_ac(one30, 3 * (1 << 28) / 2)), 1.5, 2e-9);
     PCL_CHECK_EQ_INT(svf_ac(0, 5 << 28), 0);
     /* multiply */
-    PCL_CHECK_EQ_INT(svf_mul28(1 << 28, 3 << 28), 3 << 28);
-    PCL_CHECK_EQ_INT(svf_mul28(-(1 << 28), 3 << 28), -(3 << 28));
-    PCL_CHECK_EQ_INT(svf_mul28(0, INT32_MAX), 0);
+    PCL_CHECK_EQ_INT(pcl_wide_mul(1 << 28, 3 << 28), 3 << 28);
+    PCL_CHECK_EQ_INT(pcl_wide_mul(-(1 << 28), 3 << 28), -(3 << 28));
+    PCL_CHECK_EQ_INT(pcl_wide_mul(0, INT32_MAX), 0);
 }
 
 #else /* float */
@@ -102,9 +102,9 @@ static void test_clamp_and_newton(void)
     PCL_CHECK(svf_clamp(8.0f) == 8.0f || svf_clamp(8.0f) == 8.0f);
     PCL_CHECK(svf_clamp(NAN) == -8.0f); /* a NaN is clamped too */
     PCL_CHECK(svf_clamp(INFINITY) == 8.0f && svf_clamp(-INFINITY) == -8.0f);
-    PCL_CHECK_NEAR(svf_newton(1.0f, 1.0f), 1.0, 1e-7);
-    PCL_CHECK_NEAR(svf_newton(0.5f, 2.0f), 0.5, 1e-7);
-    PCL_CHECK(svf_newton(1.0f, 40.0f) >= 0.0f); /* never negative */
+    PCL_CHECK_NEAR(pcl_cutoff_newton(1.0f, 1.0f), 1.0, 1e-7);
+    PCL_CHECK_NEAR(pcl_cutoff_newton(0.5f, 2.0f), 0.5, 1e-7);
+    PCL_CHECK(pcl_cutoff_newton(1.0f, 40.0f) >= 0.0f); /* never negative */
     PCL_CHECK_NEAR(svf_ac(0.5f, 2.0f), 1.0, 1e-7);
 }
 
@@ -121,10 +121,10 @@ static void test_mappings(void)
         sqrt(2.0) * 0.01, DAMP_TOL);
     PCL_CHECK_NEAR(pcl_test_coef_to_double(svf_damping_from_resonance(PCL_COEF(1.0))), 0.0, 1e-9);
     /* cutoff -> octaves above 1 kHz, divided by 8 (Q2.30 / float) */
-    PCL_CHECK_NEAR(pcl_test_coef_to_double(svf_u_from_hz(PCL_HZ(1000.0))), 0.0, 1e-4);
-    PCL_CHECK_NEAR(pcl_test_coef_to_double(svf_u_from_hz(PCL_HZ(2000.0))), 1.0 / 8.0, 1e-4);
-    PCL_CHECK_NEAR(pcl_test_coef_to_double(svf_u_from_hz(PCL_HZ(500.0))), -1.0 / 8.0, 1e-4);
-    PCL_CHECK_NEAR(pcl_test_coef_to_double(svf_u_from_hz(PCL_HZ(16000.0))), 0.5, 1e-4);
+    PCL_CHECK_NEAR(pcl_test_coef_to_double(pcl_cutoff_u_from_hz(PCL_HZ(1000.0))), 0.0, 1e-4);
+    PCL_CHECK_NEAR(pcl_test_coef_to_double(pcl_cutoff_u_from_hz(PCL_HZ(2000.0))), 1.0 / 8.0, 1e-4);
+    PCL_CHECK_NEAR(pcl_test_coef_to_double(pcl_cutoff_u_from_hz(PCL_HZ(500.0))), -1.0 / 8.0, 1e-4);
+    PCL_CHECK_NEAR(pcl_test_coef_to_double(pcl_cutoff_u_from_hz(PCL_HZ(16000.0))), 0.5, 1e-4);
 }
 
 static void test_target_coefficients(void)
