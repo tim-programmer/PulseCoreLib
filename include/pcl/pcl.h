@@ -20,6 +20,7 @@
 #include "pcl/pcl_osc.h"
 #include "pcl/pcl_seq.h"
 #include "pcl/pcl_svf.h"
+#include "pcl/pcl_unison.h"
 #include "pcl/pcl_vca.h"
 
 #endif /* PCL_H */

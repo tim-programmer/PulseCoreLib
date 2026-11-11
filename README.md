@@ -114,6 +114,7 @@ Link against the `pcl::pcl` target; it carries the include path and the sample-t
 | Module | Header | Rate | Float | Q15 | Q31 | Design note |
 |--------|--------|------|:-----:|:---:|:---:|-------------|
 | Oscillator (sine, triangle, saw, pulse; pitch/PWM/sync) | `pcl_osc.h` | audio (pitch/PWM control rate) | yes | yes | yes | [oscillator.md](docs/modules/oscillator.md) |
+| Unison oscillator (up to 8 detuned `pcl_osc` voices, seeded start phases, mono or constant-power stereo spread) | `pcl_unison.h` | audio (pitch/PWM control rate) | yes | yes | yes | [unison.md](docs/modules/unison.md) |
 | ADSR envelope (exponential/linear stages, gate buffer or events, `run_through`) | `pcl_adsr.h` | control (interpolated to audio) | yes | yes | yes | [adsr.md](docs/modules/adsr.md) |
 | LFO (sine, triangle, saw up/down, square, random step/smooth; rate input) | `pcl_lfo.h` | control (interpolated to audio) | yes | yes | yes | [lfo.md](docs/modules/lfo.md) |
 | Noise: white, pink (Voss-McCartney), brown | `pcl_noise.h` | audio | yes | yes | yes | [noise.md](docs/modules/noise.md) |

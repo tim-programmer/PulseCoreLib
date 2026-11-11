@@ -12,6 +12,7 @@ add_library(pcl STATIC
     mod/pcl_vca.c
     osc/pcl_noise.c
     osc/pcl_osc.c
+    osc/pcl_unison.c
 )
 add_library(pcl::pcl ALIAS pcl)
 
