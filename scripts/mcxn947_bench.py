@@ -164,6 +164,12 @@ def main():
     print("run:")
     port = find_port(args.port)
     raw = capture(port, args.baud, pyocd("reset"))
+    return 0 if report(kind, raw, ref_banner, ref_cases, sample_bytes) else 1
+
+
+def report(kind, raw, ref_banner, ref_cases, sample_bytes):
+    """Parses the board's capture, compares it with the host reference, prints the table.
+    Returns True if every case arrived intact and matched. Shared with scripts/rp2040_bench.py."""
     banner, cases, _ = parse(raw, "board")
     print(f"  board: {banner}")
     if parse.hw:
@@ -196,7 +202,7 @@ def main():
         print(f"{name:<15}{'ok' if b['crc_ok'] else 'BAD':<5}{verdict:<24}"
               f"{b['total'] / b['frames']:>11.1f}{b['min'] / BLOCK:>11.1f}{b['max'] / BLOCK:>9.1f}")
     print("\nRESULT:", "PASS" if ok else "FAIL")
-    return 0 if ok else 1
+    return ok
 
 
 if __name__ == "__main__":

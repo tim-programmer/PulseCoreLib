@@ -2,9 +2,10 @@
 
 Header: `include/pcl/pcl_reverb.h` - Source: `src/fx/pcl_reverb.c` - Tests: `tests/test_reverb.c`
 
-**Status: implemented in float, Q15 and Q31; all tests pass in all three builds** (Clang with ASan +
+**Status: implemented in float, Q15 and Q31; all tests pass in all three builds, and on two boards
+(FRDM-MCXN947 Cortex-M33, Raspberry Pi Pico Cortex-M0+), bit-exact against the host** (Clang with ASan +
 UBSan as well, GCC Release, and the Cortex-M0+ / M33 / MCXN947 cross builds, including the M0+ check
-that Q15/Q31 pull in no soft-float runtime). Cycle counts are **measured** on the FRDM-MCXN947 and are
+that Q15/Q31 pull in no soft-float runtime). Cycle counts are **measured** on both boards and are
 **well above the draft's estimates**; see "Cost" and "Open points".
 
 ## Summary
@@ -179,11 +180,27 @@ mix 0.3, `mod_depth` 0.5, stereo out. Bit-exact against the host build in all th
   and each costs about what one delay line does (float `SMALL` is 6.4 delays, `QUALITY` 13).
 * **16-bit lines cost 25-50 % more than native in float and Q31** (the dither, the dead zone and the
   conversions), and save half the RAM.
-* **Cortex-M0+ (not measured; no board):** the Q4.28 x Q2.30 products are 64-bit, and the M0+ has no
-  32x32->64 multiply. `SMALL` makes about 31 `__aeabi_lmul` calls per sample. From the instruction
-  counts, my rough guess is 2 000-3 000 cycles per sample, so a 48 MHz M0+ could not run `SMALL` at
-  48 kHz (perhaps at 16 kHz). The delay and filters share this design (64-bit products), but for them
-  it is one line, not nine. See "Open points".
+### MEASURED on a Cortex-M0+ (RP2040)
+
+Raspberry Pi Pico (RP2040, Cortex-M0+, no FPU, 125 MHz), SysTick cycle counter, `-O2`, from flash
+through the XIP cache, interrupts off while timing; same cases as above. Bit-exact against the host in
+Q15 and Q31; float identical too (2048/2048 samples, soft-float).
+
+| Case | Q15 | Q31 | float (soft) |
+|------|----:|----:|-------------:|
+| `reverb_small_q15` (16-bit lines) | 2 763 | 2 850 | 12 368 |
+| `reverb_small_native` | 2 752 | 2 564 | 9 117 |
+| `reverb_quality_q15` (16-bit lines) | 4 565 | 4 683 | 20 761 |
+| `reverb_quality_native` | 4 555 | 4 207 | 15 204 |
+
+For scale on the same chip (Q15): `delay_linear` 331, `svf_static` 470, `ladder_lp24` 960.
+
+* **`SMALL` in Q15 needs 2 763 cycles per sample: 106 % of a 125 MHz M0+ at 48 kHz, 66 % at 32 kHz,
+  49 % at 22.05 kHz.** On the M0+ it is only usable at reduced sample rates as built; a 48 MHz part
+  (the MKM14Z128A class) would manage about 17 kHz with nothing else running.
+* The cause is the 64-bit products: the M0+ has no 32x32->64 multiply, so each Q4.28 x Q2.30 product
+  is an `__aeabi_lmul` call (about 31 per sample for `SMALL`). The M33 is 3.3x faster per cycle here.
+* Float on the M0+ (soft-float) is 3-4x slower again; it is not a configuration for this core.
 
 ## Rate
 
@@ -239,7 +256,8 @@ more (`render reverb out 7`). Not yet listened to by a person.
 
 1. **Speed.** If the measured cost is too high, options in rough order of payoff:
    (a) a 32-bit Q15 path (Q15 x Q15 products, `pcl_mul_q15_q30`-style), which matters most for the M0+
-   and would also speed up the M33 Q15 build; this is a second arithmetic path with its own accuracy
+   (measured: `SMALL` Q15 is 2 763 cycles/sample there, more than a 125 MHz RP2040 has at 48 kHz) and
+   would also speed up the M33 Q15 build; this is a second arithmetic path with its own accuracy
    tests;
    (b) float: drop the +-4 clamp on line writes (the delay doesn't clamp either), about 10-20 %;
    (c) the half-rate tank from the draft (question 5), about half the cost and memory;

@@ -99,6 +99,23 @@ Notes:
 * Options: `--no-build`, `--no-flash`, `--port`, `--baud`; `-DPCL_MCXN947_DISABLE_LPCAC=ON`
   at configure time turns the flash cache off to see its effect on the cycle counts.
 
+## Testing on an RP2040 (Raspberry Pi Pico)
+
+The same benchmark on a Cortex-M0+ with no FPU, over the Pico's own USB port:
+
+```sh
+# Pico SDK in $PICO_SDK_PATH (default /usr/share/pico-sdk), arm-none-eabi-gcc and picotool installed
+.venv-tools/bin/python scripts/rp2040_bench.py --type q15     # or q31, float
+```
+
+It builds `platform/rp2040` (a standalone Pico SDK project, `-O2`, 125 MHz, running from flash through
+the XIP cache) and the host reference, flashes with `picotool` (which reboots a running bench firmware
+into BOOTSEL over USB; the very first time, hold BOOTSEL while plugging in), sends `R` on the USB serial
+port and compares every case with the host build as above. Cycles come from the core's 24-bit SysTick,
+widened in software; interrupts are off while a case is timed, so USB servicing does not land in the
+measurement. Flashing replaces whatever firmware the Pico had. Options: `--no-build`, `--no-flash`,
+`--port`, `--sdk`.
+
 ## Regenerating the lookup tables
 
 `src/core/pcl_tables.c` is generated (C99 cannot evaluate `sin`/`exp2` at compile time) and checked in:
