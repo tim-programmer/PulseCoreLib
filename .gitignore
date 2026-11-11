@@ -105,3 +105,7 @@ desktop.ini
 
 # NXP MCUXpresso SDK pieces (fetched by scripts/fetch_mcuxsdk.sh, ~35 MB)
 /third_party/
+
+# Python bytecode (written by the bench scripts on every run)
+__pycache__/
+*.pyc
