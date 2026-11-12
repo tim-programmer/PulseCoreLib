@@ -222,6 +222,9 @@ static void arp_sound(pcl_arp_t *arp, pcl_evbuf_t *b, uint16_t offset, unsigned 
     const uint8_t n = (uint8_t)(note > ARP_NOTE_MAX ? ARP_NOTE_MAX : note);
 
     pcl_evbuf_emit(b, offset, PCL_EVT_NOTE_ON, n, vel);
+    if (arp->on_count >= PCL_ARP_MAX_NOTES) { 
+        return;   /* or drop the oldest */
+    }
     arp->on_note[arp->on_count++] = n;
 }
 
