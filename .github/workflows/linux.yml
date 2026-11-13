@@ -1,0 +1,32 @@
+# Linux build and tests with GCC and Clang (-Wall -Wextra -Wpedantic -Werror), in all three
+# sample types: the same commands as the "Build and test" section of CLAUDE.md.
+name: linux
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  host:
+    name: ${{ matrix.compiler }} ${{ matrix.sample_type }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [gcc, clang]
+        sample_type: [FLOAT, Q15, Q31]
+    env:
+      CC: ${{ matrix.compiler }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Configure
+        run: cmake -B build -DPCL_SAMPLE_TYPE=${{ matrix.sample_type }}
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure --parallel 4
