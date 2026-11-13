@@ -27,6 +27,9 @@ add_library(pcl_warnings INTERFACE)
 add_library(pcl_strict_warnings INTERFACE)
 if(MSVC)
     target_compile_options(pcl_warnings INTERFACE /W4 /WX)
+    # fopen and friends are standard C99; MSVC's C4996 "use fopen_s" warning would fail /WX.
+    # Only the host tools and tests do file I/O; the core has none (hard rule 6).
+    target_compile_definitions(pcl_warnings INTERFACE _CRT_SECURE_NO_WARNINGS)
 else()
     target_compile_options(pcl_warnings INTERFACE -Wall -Wextra -Wpedantic -Werror)
     target_compile_options(pcl_strict_warnings INTERFACE

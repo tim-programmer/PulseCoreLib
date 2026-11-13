@@ -2,7 +2,9 @@ add_executable(gen_tables gen_tables.c)
 target_link_libraries(gen_tables PRIVATE pcl_warnings)
 set_target_properties(gen_tables PROPERTIES C_STANDARD 99 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
 
-find_library(PCL_MATH_LIBRARY m)
+if(NOT WIN32) # the maths functions are in the C runtime on Windows
+    find_library(PCL_MATH_LIBRARY m)
+endif()
 if(PCL_MATH_LIBRARY)
     target_link_libraries(gen_tables PRIVATE ${PCL_MATH_LIBRARY})
 endif()

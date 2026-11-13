@@ -1,0 +1,3 @@
+#!/bin/sh
+# Wrapper so CMake can use "zig cc" as a single program (see x86_64-windows-zig.cmake).
+exec zig cc -target x86_64-windows-gnu "$@"

@@ -1,4 +1,6 @@
-find_library(PCL_MATH_LIBRARY m)
+if(NOT WIN32) # the maths functions are in the C runtime on Windows
+    find_library(PCL_MATH_LIBRARY m)
+endif()
 
 # One executable per test source; each is a single translation unit that includes
 # pcl_test.h (which holds the harness state as file-scope statics).

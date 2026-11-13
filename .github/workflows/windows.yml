@@ -1,0 +1,29 @@
+# Windows build and tests with real MSVC (/W4 /WX), in all three sample types.
+# The zig + Wine presets (win-*) cover the MinGW/Clang flavour locally; this covers MSVC.
+name: windows
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  msvc:
+    name: MSVC x64 ${{ matrix.sample_type }}
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        sample_type: [FLOAT, Q15, Q31]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -B build -A x64 -DPCL_SAMPLE_TYPE=${{ matrix.sample_type }}
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Test
+        run: ctest --test-dir build -C Release --output-on-failure --parallel 4

@@ -4,7 +4,6 @@
  * block-size independence, aliasing, smoothing, type changes, modulation timing, a time-domain
  * model that follows the control-rate ramps, and stability under smooth and violent modulation.
  */
-#include <complex.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -164,11 +163,40 @@ static void rbj(int t, double f, double fs, double q, double db, double *c)
     c[4] = a[2] / a[0];
 }
 
-static double complex response(const double *c, double w)
+/* A minimal complex type: MSVC has no C99 complex arithmetic, so the test carries its own. */
+typedef struct
 {
-    const double complex z = cexp(I * w);
+    double re;
+    double im;
+} cplx_t;
 
-    return (c[0] + c[1] / z + c[2] / (z * z)) / (1.0 + c[3] / z + c[4] / (z * z));
+static cplx_t cplx_sub(cplx_t a, cplx_t b)
+{
+    cplx_t r;
+
+    r.re = a.re - b.re;
+    r.im = a.im - b.im;
+    return r;
+}
+
+static double cplx_abs(cplx_t a) { return hypot(a.re, a.im); }
+
+static double cplx_arg(cplx_t a) { return atan2(a.im, a.re); }
+
+/* H(e^jw) = (c0 + c1 z^-1 + c2 z^-2) / (1 + c3 z^-1 + c4 z^-2), with z^-k = cos(kw) - j sin(kw). */
+static cplx_t response(const double *c, double w)
+{
+    const double c1 = cos(w), s1 = sin(w), c2 = cos(2.0 * w), s2 = sin(2.0 * w);
+    const double nr = c[0] + c[1] * c1 + c[2] * c2;
+    const double ni = -(c[1] * s1 + c[2] * s2);
+    const double dr = 1.0 + c[3] * c1 + c[4] * c2;
+    const double di = -(c[3] * s1 + c[4] * s2);
+    const double dd = dr * dr + di * di;
+    cplx_t       h;
+
+    h.re = (nr * dr + ni * di) / dd;
+    h.im = (ni * dr - nr * di) / dd;
+    return h;
 }
 
 /* The module's coefficients as doubles. */
@@ -275,10 +303,10 @@ static double coef_error_db(const pcl_biquad_t *f, int t, double fc, double q, d
     rbj(t, fc, fs, q, db, c_ref);
     for (k = 0; k < 120; k++)
     {
-        const double         w = 2.0 * pi * 2.0 / fs * pow(0.49 * fs / 2.0, (double)k / 119.0);
-        const double complex h1 = response(c_mod, w);
-        const double complex h2 = response(c_ref, w);
-        const double         e = 20.0 * log10(1.0 + cabs(h1 - h2) / (cabs(h2) + 1.0e-3));
+        const double w = 2.0 * pi * 2.0 / fs * pow(0.49 * fs / 2.0, (double)k / 119.0);
+        const cplx_t h1 = response(c_mod, w);
+        const cplx_t h2 = response(c_ref, w);
+        const double e = 20.0 * log10(1.0 + cplx_abs(cplx_sub(h1, h2)) / (cplx_abs(h2) + 1.0e-3));
 
         if (e > worst)
             worst = e;
@@ -386,20 +414,20 @@ static void test_gain_landmarks(void)
         cfg = make_cfg(48000u, PCL_BIQUAD_PEAK, 2000.0, 3.0, db, 0.0);
         PCL_CHECK_EQ_INT(pcl_biquad_init(&f, &cfg), PCL_OK);
         module_coefs(&f, c);
-        PCL_CHECK_NEAR(20.0 * log10(cabs(response(c, 2.0 * pi * 2000.0 / 48000.0))), db, 0.01);
-        PCL_CHECK_NEAR(20.0 * log10(cabs(response(c, 2.0 * pi * 20.0 / 48000.0))), 0.0, 0.05);
-        PCL_CHECK_NEAR(20.0 * log10(cabs(response(c, pi * 0.98))), 0.0, 0.3);
+        PCL_CHECK_NEAR(20.0 * log10(cplx_abs(response(c, 2.0 * pi * 2000.0 / 48000.0))), db, 0.01);
+        PCL_CHECK_NEAR(20.0 * log10(cplx_abs(response(c, 2.0 * pi * 20.0 / 48000.0))), 0.0, 0.05);
+        PCL_CHECK_NEAR(20.0 * log10(cplx_abs(response(c, pi * 0.98))), 0.0, 0.3);
         /* low shelf: gain_db at DC, 0 dB at Nyquist; high shelf: the reverse */
         cfg = make_cfg(48000u, PCL_BIQUAD_LOWSHELF, 1000.0, 0.7071, db, 0.0);
         PCL_CHECK_EQ_INT(pcl_biquad_init(&f, &cfg), PCL_OK);
         module_coefs(&f, c);
-        PCL_CHECK_NEAR(20.0 * log10(cabs(response(c, 2.0 * pi * 20.0 / 48000.0))), db, 0.05);
-        PCL_CHECK_NEAR(20.0 * log10(cabs(response(c, pi * 0.999))), 0.0, 0.05);
+        PCL_CHECK_NEAR(20.0 * log10(cplx_abs(response(c, 2.0 * pi * 20.0 / 48000.0))), db, 0.05);
+        PCL_CHECK_NEAR(20.0 * log10(cplx_abs(response(c, pi * 0.999))), 0.0, 0.05);
         cfg = make_cfg(48000u, PCL_BIQUAD_HIGHSHELF, 4000.0, 0.7071, db, 0.0);
         PCL_CHECK_EQ_INT(pcl_biquad_init(&f, &cfg), PCL_OK);
         module_coefs(&f, c);
-        PCL_CHECK_NEAR(20.0 * log10(cabs(response(c, pi * 0.999))), db, 0.05);
-        PCL_CHECK_NEAR(20.0 * log10(cabs(response(c, 2.0 * pi * 40.0 / 48000.0))), 0.0, 0.05);
+        PCL_CHECK_NEAR(20.0 * log10(cplx_abs(response(c, pi * 0.999))), db, 0.05);
+        PCL_CHECK_NEAR(20.0 * log10(cplx_abs(response(c, 2.0 * pi * 40.0 / 48000.0))), 0.0, 0.05);
     }
     /* band-pass: 0 dB at the centre whatever the Q; all-pass: 0 dB everywhere; notch: a null */
     {
@@ -415,16 +443,17 @@ static void test_gain_landmarks(void)
 
             PCL_CHECK_EQ_INT(pcl_biquad_init(&f, &cfg), PCL_OK);
             module_coefs(&f, c);
-            PCL_CHECK_NEAR(cabs(response(c, 2.0 * pi * HZ_D(cfg.cutoff_hz) / 48000.0)), 1.0, 2e-3);
+            PCL_CHECK_NEAR(
+                cplx_abs(response(c, 2.0 * pi * HZ_D(cfg.cutoff_hz) / 48000.0)), 1.0, 2e-3);
             cfg.type = PCL_BIQUAD_ALLPASS;
             PCL_CHECK_EQ_INT(pcl_biquad_init(&f, &cfg), PCL_OK);
             module_coefs(&f, c);
             for (k = 1; k < 60; k++)
-                PCL_CHECK_NEAR(cabs(response(c, pi * (double)k / 61.0)), 1.0, 3e-3);
+                PCL_CHECK_NEAR(cplx_abs(response(c, pi * (double)k / 61.0)), 1.0, 3e-3);
             cfg.type = PCL_BIQUAD_NOTCH;
             PCL_CHECK_EQ_INT(pcl_biquad_init(&f, &cfg), PCL_OK);
             module_coefs(&f, c);
-            PCL_CHECK(cabs(response(c, 2.0 * pi * HZ_D(cfg.cutoff_hz) / 48000.0)) < 2e-3);
+            PCL_CHECK(cplx_abs(response(c, 2.0 * pi * HZ_D(cfg.cutoff_hz) / 48000.0)) < 2e-3);
         }
     }
 }
@@ -514,17 +543,17 @@ static void test_sine_response_matches_cookbook(void)
         rbj(t, HZ_D(cfg.cutoff_hz), fs, Q_D(cfg.q), DB_D(cfg.gain_db), c_ref);
         for (q = 0; q < sizeof ratios / sizeof ratios[0]; q++)
         {
-            const int            m = (int)floor(2000.0 * ratios[q] / fs * 32768.0 + 0.5);
-            const double         ft = fs * (double)m / 32768.0;
-            const double complex h = response(c_ref, 2.0 * pi * ft / fs);
-            const double         amp = 0.5 / fmax(1.0, cabs(h));
-            resp_t               got = measure(&f, ft, amp, fs, 0.4);
+            const int    m = (int)floor(2000.0 * ratios[q] / fs * 32768.0 + 0.5);
+            const double ft = fs * (double)m / 32768.0;
+            const cplx_t h = response(c_ref, 2.0 * pi * ft / fs);
+            const double amp = 0.5 / fmax(1.0, cplx_abs(h));
+            resp_t       got = measure(&f, ft, amp, fs, 0.4);
 
-            if (cabs(h) * amp < 3.0e-3)
+            if (cplx_abs(h) * amp < 3.0e-3)
                 continue; /* below the Q15 noise floor */
-            PCL_CHECK_NEAR(20.0 * log10(got.amp / (amp * cabs(h))), 0.0, SINE_MAG_TOL_DB);
-            if (cabs(h) * amp > 0.02)
-                PCL_CHECK_NEAR(wrap_pi(got.ph - carg(h)), 0.0, SINE_PHASE_TOL);
+            PCL_CHECK_NEAR(20.0 * log10(got.amp / (amp * cplx_abs(h))), 0.0, SINE_MAG_TOL_DB);
+            if (cplx_abs(h) * amp > 0.02)
+                PCL_CHECK_NEAR(wrap_pi(got.ph - cplx_arg(h)), 0.0, SINE_PHASE_TOL);
         }
     }
 }
@@ -799,13 +828,13 @@ static void test_q_and_gain_glide(void)
     pcl_biquad_process(&f, z, z, NULL, 112); /* 7 control periods of the 240-sample ramp */
     module_coefs(&f, c);
     {
-        const double g_mid = 20.0 * log10(cabs(response(c, 2.0 * pi * 2000.0 / 48000.0)));
+        const double g_mid = 20.0 * log10(cplx_abs(response(c, 2.0 * pi * 2000.0 / 48000.0)));
 
         PCL_CHECK_NEAR(g_mid, 12.0 * 112.0 / 240.0, 0.1); /* linear in dB */
     }
     pcl_biquad_process(&f, z, z, NULL, 256);
     module_coefs(&f, c);
-    PCL_CHECK_NEAR(20.0 * log10(cabs(response(c, 2.0 * pi * 2000.0 / 48000.0))), 12.0, 0.02);
+    PCL_CHECK_NEAR(20.0 * log10(cplx_abs(response(c, 2.0 * pi * 2000.0 / 48000.0))), 12.0, 0.02);
     /* Q: a band-pass bandwidth halves when Q doubles; after the ramp the coefficients are those of
      * Q = 8 */
     PCL_CHECK_EQ_INT(pcl_biquad_set_type(&f, PCL_BIQUAD_BP), PCL_OK);
@@ -821,7 +850,7 @@ static void test_q_and_gain_glide(void)
         {
             const double w = pi * (double)k / 41.0;
 
-            PCL_CHECK_NEAR(cabs(response(c, w)), cabs(response(ref, w)), 4e-3);
+            PCL_CHECK_NEAR(cplx_abs(response(c, w)), cplx_abs(response(ref, w)), 4e-3);
         }
     }
 }

@@ -25,6 +25,23 @@ cmake --preset cm33-float  && cmake --build --preset cm33-float
 cmake --preset cm33-q31    && cmake --build --preset cm33-q31
 ```
 
+### Windows
+
+On Windows itself, the commands above work as they are with Visual Studio (MSVC builds with
+`/W4 /WX`; pass `-C Release` to `ctest` if you build with `--config Release`). GitHub Actions
+builds and tests all three sample types with MSVC on every push (`.github/workflows/windows.yml`).
+
+From Linux or macOS, the `win-*` presets cross-compile with [zig](https://ziglang.org) (its
+bundled clang and MinGW-w64 headers; no Windows SDK needed) and run the tests under Wine:
+
+```sh
+cmake --preset win-float && cmake --build --preset win-float && ctest --preset win-float
+```
+
+(`win-q15` and `win-q31` likewise.) This needs `zig`, `ninja` and, for the tests, `wine`.
+Running the tests under Wine is slow (several minutes per build). Set `WINEPREFIX` to keep
+the Wine state out of `~/.wine`.
+
 CMake options: `PCL_SAMPLE_TYPE` (default `FLOAT`), `PCL_BUILD_TESTS`, `PCL_BUILD_EXAMPLES` and
 `PCL_BUILD_TOOLS` (all default `ON`; the embedded presets turn them off), `PCL_ALLOW_FLOAT_INIT`
 (default `OFF`; lets init/config code use float in Q15/Q31 builds, never process code).
