@@ -348,10 +348,10 @@ static void test_db_round_trip(void)
 
     for (d = -100.0; d <= 5.9; d += 0.173)
     {
-        const double g = coef_d(pcl_db_to_gain(DB_OF(d)));
         const double back = DB_D(pcl_gain_to_db(pcl_db_to_gain(DB_OF(d))));
         /* the gain's own quantisation (Q2.30) dominates at low levels */
-        const double quant = IS_FLOAT ? 0.0 : 8.7 * 0.5 / (g * 1073741824.0);
+        const double quant
+            = IS_FLOAT ? 0.0 : 8.7 * 0.5 / (coef_d(pcl_db_to_gain(DB_OF(d))) * 1073741824.0);
         PCL_CHECK_NEAR(back, d, 2.0e-4 + quant);
     }
 }
