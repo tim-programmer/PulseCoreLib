@@ -855,8 +855,8 @@ PCL_FORCE_INLINE rv_val_t rv_damp(
 PCL_FORCE_INLINE void rv_comb_block(pcl_reverb_t *rv, unsigned c, const rv_val_t *u, rv_val_t *wl,
     rv_val_t *wr, size_t n, const unsigned storage)
 {
-    const rv_val_t     sl = c < 2u ? 1 : -1;
-    const rv_val_t     sr = (c & 1u) ? -1 : 1;
+    const rv_val_t     sl = c < 2u ? (rv_val_t)1 : (rv_val_t)-1;
+    const rv_val_t     sr = (c & 1u) ? (rv_val_t)-1 : (rv_val_t)1;
     pcl_reverb_line_t *l = &rv->tank[c];
     void *const        buf = l->buf;
     const uint32_t     len = l->length;
@@ -927,7 +927,7 @@ PCL_FORCE_INLINE void rv_tank_write_block(pcl_reverb_t *rv, unsigned j,
     pcl_reverb_line_t *l = &rv->tank[j];
     void *const        buf = l->buf;
     const uint32_t     len = l->length;
-    const rv_val_t     sign = ((RV_IN_NEG >> j) & 1u) ? -1 : 1;
+    const rv_val_t     sign = ((RV_IN_NEG >> j) & 1u) ? (rv_val_t)-1 : (rv_val_t)1;
     uint32_t           w = l->w;
     uint32_t           rng = l->rng;
     size_t             t;

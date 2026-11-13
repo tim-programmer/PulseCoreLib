@@ -17,7 +17,7 @@ jobs:
       matrix:
         sample_type: [FLOAT, Q15, Q31]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Configure
         run: cmake -B build -A x64 -DPCL_SAMPLE_TYPE=${{ matrix.sample_type }}
